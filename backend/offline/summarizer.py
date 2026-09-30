@@ -7,12 +7,22 @@ Produces the text that gets embedded:
 import re
 
 from core.llm import make_chain
-from prompts.summarization_prompt import SQL_SUMMARY_PROMPT, TABLE_SUMMARY_PROMPT
+from prompts.schemas import TableSummary
+from prompts.summarization_prompt import (
+    SQL_SUMMARY_PROMPT,
+    TABLE_SUMMARY_FALLBACK_PROMPT,
+    TABLE_SUMMARY_PROMPT,
+)
 
 
 class Summarizer:
     def __init__(self, llm):
-        self.table_chain = make_chain(TABLE_SUMMARY_PROMPT, llm)
+        self.table_fallback_chain = make_chain(TABLE_SUMMARY_FALLBACK_PROMPT, llm)
+        try:
+            self.table_chain = TABLE_SUMMARY_PROMPT | llm.with_structured_output(TableSummary)
+            self.table_chain = self.table_chain.with_fallbacks([self.table_fallback_chain])
+        except (AttributeError, NotImplementedError, TypeError):
+            self.table_chain = self.table_fallback_chain
         self.sql_chain = make_chain(SQL_SUMMARY_PROMPT, llm)
 
     def summarise_queries(self, query_log: list) -> None:

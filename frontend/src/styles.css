@@ -49,6 +49,11 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .connection-ok { color: #15803d; }
 .connection-error { color: var(--danger); }
 .source-badge { width: fit-content; max-width: 100%; overflow-wrap: anywhere; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); font-size: 12px; }
+.relationships h3 { font-size: 14px; margin-bottom: 6px; }
+.relationships ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; font-size: 12px; overflow-wrap: anywhere; }
+.question-examples { margin: 6px 0 8px; font-size: 12px; }
+.question-examples summary { cursor: pointer; color: var(--muted); }
+.question-examples ul { margin: 6px 0 0; padding-left: 18px; }
 .field { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
 textarea, input { font: inherit; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; width: 100%; }
 

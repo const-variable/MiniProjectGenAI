@@ -44,6 +44,7 @@ export default function UploadPanel({ onBuild, loading }) {
   const [files, setFiles] = useState([]);
   const [logFiles, setLogFiles] = useState([]);
   const [descriptions, setDescriptions] = useState("");
+  const [datasetDescription, setDatasetDescription] = useState("");
   const [connection, setConnection] = useState({ url: "", schema: "", tables: "" });
 
   return (
@@ -60,9 +61,9 @@ export default function UploadPanel({ onBuild, loading }) {
           <h2>Tables</h2>
           <FilePicker
             title="Drop your table files here"
-            hint="or click to choose · .csv, .txt, .tsv · comma, tab, | or ; separated"
-            accept=".csv,.txt,.tsv"
-            pattern={/\.(csv|txt|tsv)$/i}
+            hint="or click to choose · .csv, .txt, .tsv or .xlsx Excel workbook · comma, tab, | or ; separated"
+            accept=".csv,.txt,.tsv,.xlsx"
+            pattern={/\.(csv|txt|tsv|xlsx)$/i}
             files={files}
             setFiles={setFiles}
           />
@@ -93,8 +94,19 @@ export default function UploadPanel({ onBuild, loading }) {
         />
       </label>
 
+      <label className="field">
+        What is this dataset about? <span className="muted">optional</span>
+        <textarea
+          rows={2}
+          value={datasetDescription}
+          onChange={(event) => setDatasetDescription(event.target.value)}
+          placeholder="For example, this is a school dataset of students and their assessment scores."
+        />
+      </label>
+
       <button className="primary" disabled={(mode === "upload" ? !files.length : !connection.url.trim()) || loading}
-        onClick={() => onBuild(mode, mode === "upload" ? { files } : connection, logFiles, descriptions)}>
+        onClick={() => onBuild(mode, mode === "upload" ? { files } : connection,
+          logFiles, descriptions, datasetDescription)}>
         {loading ? "Building the index…" : "Build index"}
       </button>
     </section>

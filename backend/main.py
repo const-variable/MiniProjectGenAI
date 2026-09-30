@@ -62,6 +62,14 @@ class TableInfo(BaseModel):
     rows: int
     summary: str
     columns: List[ColumnInfo]
+    example_questions: List[str] = []
+
+
+class RelationshipInfo(BaseModel):
+    table_a: str
+    column_a: str
+    table_b: str
+    column_b: str
 
 
 class ResultTable(BaseModel):
@@ -75,6 +83,7 @@ class UploadResponse(BaseModel):
     query_logs: int
     tables: List[TableInfo]
     source: dict
+    relationships: List[RelationshipInfo] = []
 
 
 class AskRequest(BaseModel):
@@ -100,6 +109,10 @@ class AskResponse(BaseModel):
     similar_queries: List[SimilarQuery]
     result: ResultTable
     error: Optional[str] = None
+    selection_reason: Optional[str] = None
+    sql_explanation: Optional[str] = None
+    score_kind: str = "distance"
+    standalone_question: Optional[str] = None
 
 
 def get_session(session_id: str) -> TableRAGSession:
@@ -112,7 +125,10 @@ def get_session(session_id: str) -> TableRAGSession:
 def session_payload(sid: str, s: TableRAGSession) -> dict:
     return {"session_id": sid, "summary": s.summary, "query_logs": len(s.query_log),
             "tables": s.tables_info(), "source": {"kind": s.source.kind,
-            "dialect": s.source.dialect, "name": s.source.display_name()}}
+            "dialect": s.source.dialect, "name": s.source.display_name()},
+            "relationships": [{"table_a": table_a, "column_a": column_a,
+                               "table_b": table_b, "column_b": column_b}
+                              for table_a, column_a, table_b, column_b in s.source.join_keys()]}
 
 
 def read_query_logs(query_logs: Optional[List[UploadFile]]) -> list[str]:
@@ -125,10 +141,12 @@ def read_query_logs(query_logs: Optional[List[UploadFile]]) -> list[str]:
     return queries
 
 
-def build_session(source, descriptions: str, queries: list[str]) -> tuple[str, TableRAGSession]:
+def build_session(source, descriptions: str, dataset_description: str,
+                  queries: list[str]) -> tuple[str, TableRAGSession]:
     try:
         session = TableRAGSession(source, models["llm"], models["embeddings"],
-                                  notes=parse_notes(descriptions), raw_queries=queries)
+                                  notes=parse_notes(descriptions), raw_queries=queries,
+                                  dataset_description=dataset_description)
     except Exception:
         source.close()
         raise
@@ -149,6 +167,7 @@ def upload(
     files: List[UploadFile] = File(...),
     query_logs: Optional[List[UploadFile]] = File(None),
     descriptions: str = Form(""),
+    dataset_description: str = Form(""),
 ):
     """Tables (+ optional SQL query logs) -> OFFLINE VECTOR INDEX CREATION."""
     queries = read_query_logs(query_logs)
@@ -157,7 +176,7 @@ def upload(
     except ValueError as error:
         raise HTTPException(400, str(error)) from error
     try:
-        sid, session = build_session(source, descriptions, queries)
+        sid, session = build_session(source, descriptions, dataset_description, queries)
     except Exception as error:
         raise HTTPException(500, f"Failed to build the knowledge base: {error}") from error
     return session_payload(sid, session)
@@ -170,6 +189,7 @@ def connect_database(
     include_tables: str = Form(""),
     query_logs: Optional[List[UploadFile]] = File(None),
     descriptions: str = Form(""),
+    dataset_description: str = Form(""),
 ):
     """Connect a read-only database source and build its offline index."""
     queries = read_query_logs(query_logs)
@@ -179,7 +199,7 @@ def connect_database(
     except ValueError as error:
         raise HTTPException(400, str(error)) from error
     try:
-        sid, session = build_session(source, descriptions, queries)
+        sid, session = build_session(source, descriptions, dataset_description, queries)
     except Exception as error:
         raise HTTPException(500, f"Failed to build the knowledge base: {error}") from error
     return session_payload(sid, session)

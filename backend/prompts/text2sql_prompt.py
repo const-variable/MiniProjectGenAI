@@ -20,12 +20,12 @@ Rules:
 - For 'why did X change' questions: return X for the two latest periods, broken down by the most
   relevant category column, with a change column (latest minus previous), ordered by change.
 - Return at most 50 rows. Round results to 2 decimals.
-- Output only the SQL inside ```sql fences.
 
 SQL dialect: {dialect}
 Dialect-specific rules:
 {dialect_rules}
 
+{dataset_context}
 Tables (from the Table Metadata Store):
 {schema}
 
@@ -44,7 +44,12 @@ TEXT2SQL_PROMPT = ChatPromptTemplate.from_messages([
     ("human", "{question}"),
 ])
 
-# Used by the extension's retry loop when a generated query fails.
+TEXT2SQL_FALLBACK_PROMPT = ChatPromptTemplate.from_messages([
+  ("system", COMMON_SQL_RULES + "\n- Output only the SQL inside ```sql fences."),
+  ("human", "{question}"),
+])
+
+# Used by the graph's SQL repair node when a generated query fails.
 FIX_SQL_PROMPT = ChatPromptTemplate.from_messages([
     ("system", SQL_RULES),
     ("human", "{question}"),

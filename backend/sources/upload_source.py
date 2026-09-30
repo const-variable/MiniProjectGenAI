@@ -1,5 +1,6 @@
 """Uploaded delimited files, backed by a shared in-memory SQLite engine."""
 from pathlib import Path
+import io
 
 import pandas as pd
 from sqlalchemy import create_engine
@@ -34,17 +35,32 @@ class UploadSource(DataSource):
     def _add_file(self, filename: str, raw: bytes, max_bytes: int | None) -> None:
         name = filename or "table"
         if not name.lower().endswith(ALLOWED_EXTENSIONS):
-            raise ValueError(f"{name}: tables must be .csv, .txt or .tsv files.")
+            raise ValueError(f"{name}: tables must be .csv, .txt, .tsv or .xlsx files.")
         if max_bytes is not None and len(raw) > max_bytes:
             raise ValueError(f"{name} is larger than {max_bytes // (1024 * 1024)} MB.")
         try:
+            if name.lower().endswith(".xlsx"):
+                sheets = pd.read_excel(io.BytesIO(raw), sheet_name=None)
+                populated = [(sheet, clean_table(frame)) for sheet, frame in sheets.items()
+                             if not frame.empty and frame.shape[1] > 0]
+                if not populated:
+                    raise ValueError("workbook has no data in any sheet")
+                base = clean_name(Path(name).stem)
+                for sheet, frame in populated:
+                    table_name = base if len(populated) == 1 else clean_name(f"{base}_{sheet}")
+                    self._add_frame(table_name, frame)
+                return
             frame = clean_table(read_table(raw))
         except Exception as error:
+            if isinstance(error, ValueError) and str(error).startswith(f"{name}"):
+                raise
             raise ValueError(f"Could not read {name}: {error}") from error
         if frame.empty or frame.shape[1] == 0:
             raise ValueError(f"{name} has no data.")
 
-        base = clean_name(Path(name).stem)
+        self._add_frame(clean_name(Path(name).stem), frame)
+
+    def _add_frame(self, base: str, frame: pd.DataFrame) -> None:
         table, suffix = base, 2
         while table in self.frames:
             table, suffix = f"{base}_{suffix}", suffix + 1

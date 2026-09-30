@@ -8,11 +8,23 @@ from langchain_core.prompts import ChatPromptTemplate
 # One summary per table, built from its metadata and the logged queries that use it.
 TABLE_SUMMARY_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
+     "You summarise one database table for a search index. Give a 3-5 sentence summary and exactly "
+     "five useful business questions this table can help answer. Say what the table "
+     "contains, what its important columns mean, and which kinds of questions it can answer. "
+     "If example queries are given, also describe how the table is typically queried. "
+     "Use only the information given."),
+    ("human", "Dataset context: {dataset_description}\n\nTable metadata:\n{metadata}\n\n"
+     "Example queries that use this table:\n{queries}"),
+])
+
+TABLE_SUMMARY_FALLBACK_PROMPT = ChatPromptTemplate.from_messages([
+    ("system",
      "You summarise one database table for a search index. In 3-5 sentences, say what the table "
      "contains, what its important columns mean, and which kinds of questions it can answer. "
      "If example queries are given, also describe how the table is typically queried. "
      "Use only the information given."),
-    ("human", "Table metadata:\n{metadata}\n\nExample queries that use this table:\n{queries}"),
+    ("human", "Dataset context: {dataset_description}\n\nTable metadata:\n{metadata}\n\n"
+     "Example queries that use this table:\n{queries}"),
 ])
 
 # One plain-English line per logged SQL query (all queries in a single call).

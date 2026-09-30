@@ -1,6 +1,8 @@
 from pathlib import Path
+from io import BytesIO
 
 import pytest
+from openpyxl import Workbook
 
 from sources.db_source import DBSource
 from sources.upload_source import UploadSource
@@ -26,6 +28,41 @@ def test_duplicate_filenames_and_query_row_cap():
         assert source.list_tables() == ["items", "items_2"]
         assert len(source.query("SELECT * FROM items", max_rows=2)) == 2
         assert len(source.preview("items", limit=1)) == 1
+    finally:
+        source.close()
+
+
+def test_excel_workbook_creates_table_for_each_populated_sheet():
+    workbook = Workbook()
+    students = workbook.active
+    students.title = "Students"
+    students.append(["student_id", "name"])
+    students.append([1, "Ari"])
+    scores = workbook.create_sheet("Scores")
+    scores.append(["student_id", "score"])
+    scores.append([1, 95])
+    workbook.create_sheet("Empty")
+    buffer = BytesIO()
+    workbook.save(buffer)
+
+    source = UploadSource([("school.xlsx", buffer.getvalue())])
+    try:
+        assert source.list_tables() == ["school_students", "school_scores"]
+        assert source.join_keys() == [("school_students", "student_id", "school_scores", "student_id")]
+        assert source.query(
+            "SELECT s.name, c.score FROM school_students s "
+            "JOIN school_scores c ON s.student_id = c.student_id"
+        ).iloc[0].tolist() == ["Ari", 95]
+    finally:
+        source.close()
+
+
+def test_bundled_school_workbook_contains_joinable_sheets():
+    path = ROOT / "sample_data" / "school.xlsx"
+    source = UploadSource([(path.name, path.read_bytes())])
+    try:
+        assert source.list_tables() == ["school_students", "school_scores"]
+        assert ("school_students", "student_id", "school_scores", "student_id") in source.join_keys()
     finally:
         source.close()
 

@@ -11,13 +11,13 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  async function handleBuild(mode, payload, logFiles, descriptions) {
+  async function handleBuild(mode, payload, logFiles, descriptions, datasetDescription) {
     setError("");
     setLoading(true);
     try {
       const data = mode === "upload"
-        ? await uploadFiles(payload.files, logFiles, descriptions)
-        : await connectDatabase(payload.url, payload.schema, payload.tables, logFiles, descriptions);
+        ? await uploadFiles(payload.files, logFiles, descriptions, datasetDescription)
+        : await connectDatabase(payload.url, payload.schema, payload.tables, logFiles, descriptions, datasetDescription);
       setSession(data);
       setMessages([]);
       getSuggestions(data.session_id)
@@ -49,6 +49,11 @@ export default function App() {
           similar: r.similar_queries,
           result: r.result,
           error: r.error,
+          selectionReason: r.selection_reason,
+          sqlExplanation: r.sql_explanation,
+          scoreKind: r.score_kind,
+          question: q,
+          standaloneQuestion: r.standalone_question,
         },
       ]);
     } catch (e) {
@@ -97,6 +102,7 @@ export default function App() {
             tables={session.tables}
             queryLogs={session.query_logs}
             source={session.source}
+            relationships={session.relationships || []}
           />
           <ChatWindow messages={messages} loading={loading} suggestions={suggestions} onAsk={handleAsk} />
         </main>

@@ -12,6 +12,7 @@ from offline.sql_query_logs import build_query_log
 from offline.summarizer import Summarizer
 from offline.table_metadata_store import TableMetadataStore
 from offline.vector_store import VectorStore, sql_document, table_document
+from prompts.schemas import TableSummary
 
 
 @dataclass
@@ -19,16 +20,18 @@ class OfflineIndex:
     metadata_store: TableMetadataStore
     query_log: list
     table_summaries: dict
+    table_example_questions: dict
     vector_store: VectorStore
 
 
 def build_offline_index(source, llm, embedding_model, notes: dict | None = None,
-                        raw_queries: list | None = None) -> OfflineIndex:
+                        raw_queries: list | None = None,
+                        dataset_description: str = "") -> OfflineIndex:
     # Step 1: Table Metadata Store
     tables = source.list_tables()
     frames = {table: source.profile_frame(table) for table in tables}
     types = {table: classify_columns(frame) for table, frame in frames.items()}
-    metadata_store = TableMetadataStore(source, types, notes)
+    metadata_store = TableMetadataStore(source, types, notes, dataset_description)
 
     # Step 2: SQL Query Logs
     query_log = build_query_log(raw_queries or [], tables, source.dialect)
@@ -42,6 +45,7 @@ def build_offline_index(source, llm, embedding_model, notes: dict | None = None,
         summary_inputs.append({
             "metadata": metadata_store.get(table),
             "queries": "\n\n".join(queries) or "(no query logs provided)",
+            "dataset_description": dataset_description.strip() or "(not provided)",
         })
     try:
         summaries = summarizer.table_chain.batch(
@@ -49,14 +53,24 @@ def build_offline_index(source, llm, embedding_model, notes: dict | None = None,
     except Exception:
         summaries = [RuntimeError("Table summary failed") for _ in tables]
     table_summaries = {}
+    table_example_questions = {}
     for table, frame, summary in zip(tables, frames.values(), summaries):
         if isinstance(summary, Exception):
             summary = f'Table with {source.row_count(table)} rows and columns: {", ".join(frame.columns)}.'
-        table_summaries[table] = str(summary).strip()
+        if isinstance(summary, TableSummary):
+            table_summaries[table] = summary.summary.strip()
+            table_example_questions[table] = summary.example_questions
+        elif isinstance(summary, dict):
+            table_summaries[table] = str(summary.get("summary", "")).strip()
+            table_example_questions[table] = list(summary.get("example_questions", []))
+        else:
+            table_summaries[table] = str(summary).strip()
+            table_example_questions[table] = []
 
     # Steps 4 + 5: Embedding Model -> Vector Store (Embeddings Index)
-    documents = [table_document(t, table_summaries[t], source.columns(t)) for t in tables]
+    documents = [table_document(t, table_summaries[t], source.columns(t), table_example_questions[t])
+                 for t in tables]
     documents += [sql_document(i, entry) for i, entry in enumerate(query_log)]
     vector_store = VectorStore(documents, embedding_model)
 
-    return OfflineIndex(metadata_store, query_log, table_summaries, vector_store)
+    return OfflineIndex(metadata_store, query_log, table_summaries, table_example_questions, vector_store)

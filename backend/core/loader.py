@@ -5,7 +5,7 @@ import warnings
 
 import pandas as pd
 
-ALLOWED_EXTENSIONS = (".csv", ".txt", ".tsv")
+ALLOWED_EXTENSIONS = (".csv", ".txt", ".tsv", ".xlsx")
 
 
 def clean_name(s) -> str:

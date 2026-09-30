@@ -1,10 +1,14 @@
 import ResultTable from "./ResultTable";
 
 export default function AnswerDetails({ message }) {
-  const { topN = [], selected = [], similar = [], sql, result } = message;
+  const { topN = [], selected = [], similar = [], sql, result, scoreKind = "distance",
+    selectionReason, sqlExplanation, question, standaloneQuestion } = message;
   return (
     <details className="details">
       <summary>How this was answered</summary>
+      {standaloneQuestion && standaloneQuestion !== question && (
+        <p className="hint">Interpreted as: {standaloneQuestion}</p>
+      )}
 
       <h4>1 · Similarity search → Top N tables</h4>
       <div className="chips small">
@@ -14,7 +18,7 @@ export default function AnswerDetails({ message }) {
           </span>
         ))}
       </div>
-      <p className="hint">Score = embedding distance (lower is more similar).</p>
+      <p className="hint">{scoreKind === "rank" ? "Score = reciprocal rank (higher is better)." : "Score = embedding distance (lower is more similar)."}</p>
 
       <h4>2 · LLM table selection → Top K tables</h4>
       <div className="chips small">
@@ -23,6 +27,7 @@ export default function AnswerDetails({ message }) {
             {t}
           </span>
         ))}
+        {selectionReason && <p className="hint">{selectionReason}</p>}
       </div>
 
       {similar.length > 0 && (
@@ -40,6 +45,7 @@ export default function AnswerDetails({ message }) {
       )}
 
       <h4>3 · Generated SQL</h4>
+      {sqlExplanation && <p className="hint">{sqlExplanation}</p>}
       <pre className="sql">
         <code>{sql}</code>
       </pre>

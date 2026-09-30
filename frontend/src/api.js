@@ -27,22 +27,24 @@ async function request(path, options) {
   }
 }
 
-export function uploadFiles(files, logFiles, descriptions) {
+export function uploadFiles(files, logFiles, descriptions, datasetDescription) {
   const form = new FormData();
   for (const f of files) form.append("files", f); // same field names as the backend
   for (const f of logFiles || []) form.append("query_logs", f);
   form.append("descriptions", descriptions || "");
+  form.append("dataset_description", datasetDescription || "");
   // No Content-Type header: the browser sets it, with the correct boundary.
   return request("/upload", { method: "POST", body: form });
 }
 
-export function connectDatabase(url, schema, tables, logFiles, descriptions) {
+export function connectDatabase(url, schema, tables, logFiles, descriptions, datasetDescription) {
   const form = new FormData();
   form.append("connection_url", url);
   form.append("db_schema", schema || "");
   form.append("include_tables", tables || "");
   for (const file of logFiles || []) form.append("query_logs", file);
   form.append("descriptions", descriptions || "");
+  form.append("dataset_description", datasetDescription || "");
   return request("/connect", { method: "POST", body: form });
 }
 

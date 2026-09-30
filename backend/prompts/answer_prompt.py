@@ -19,11 +19,18 @@ ANSWER_PROMPT = ChatPromptTemplate.from_messages([
 OVERVIEW_PROMPT = ChatPromptTemplate.from_messages([
     ("system", "Write a 4-5 line plain-English overview of this dataset: what it is about, its size, "
                "time period and main categories. Use only the facts given. No bullet points."),
-    ("human", "{profile}"),
+    ("human", "Dataset context: {dataset_description}\n\nDataset profile:\n{profile}"),
 ])
 
 SUGGEST_PROMPT = ChatPromptTemplate.from_messages([
     ("system", "Suggest 4 short, useful questions a user could ask about this dataset. Each must be "
                "answerable from the tables given. One question per line, no numbering."),
     ("human", "{profile}"),
+])
+
+CONDENSE_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", "Rewrite the latest user question as one standalone question using the conversation "
+               "turns when needed. Preserve its intent and time references. If it is already standalone, "
+               "return it unchanged. Return only the rewritten question."),
+    ("human", "Recent turns (oldest first):\n{history}\n\nLatest question: {question}"),
 ])

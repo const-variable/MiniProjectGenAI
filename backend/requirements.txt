@@ -3,10 +3,12 @@ uvicorn[standard]
 python-multipart
 python-dotenv
 pandas
+openpyxl
 sqlalchemy>=2.0
 psycopg2-binary
 sqlglot
 langchain
+langchain-classic
 langchain-core
 langchain-community
 langchain-huggingface
@@ -16,3 +18,5 @@ timm>=1.0
 # LLM providers
 langchain-openai
 langchain-groq
+langgraph
+rank_bm25

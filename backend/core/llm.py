@@ -11,6 +11,11 @@ from langchain_core.output_parsers import StrOutputParser
 def load_llm():
     """Create the chat model named in backend/.env (LLM_PROVIDER + LLM_MODEL)."""
     from langchain.chat_models import init_chat_model
+    cache = os.getenv("LLM_CACHE", "").lower()
+    if cache == "sqlite":
+        from langchain_community.cache import SQLiteCache
+        from langchain_core.globals import set_llm_cache
+        set_llm_cache(SQLiteCache(".llm_cache.db"))
     return init_chat_model(os.environ["LLM_MODEL"],
                            model_provider=os.environ["LLM_PROVIDER"], temperature=0)
 
