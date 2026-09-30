@@ -13,7 +13,6 @@ Rules:
 - Quote identifiers exactly as listed (case-sensitive).
 - The query MUST read from the tables (FROM <table>). Never type the answer as literal values,
   and never answer from your own general knowledge: the answer must come from the data.
-- If these tables cannot answer the question, reply with exactly: NO_ANSWER
 - Match category values exactly as they are listed. To search free-text columns, use
   LIKE with wildcards, e.g. WHERE LOWER(text_col) LIKE '%keyword%'.
 - 'Latest', 'recent' or 'last quarter' mean the latest period present in the DATA, not today's date.
@@ -33,25 +32,25 @@ Similar past queries (use as patterns, adapt them to the question):
 {examples}"""
 
 DIALECT_RULES = {
-  "sqlite": "Dates are TEXT 'YYYY-MM-DD'. Year: strftime('%Y', col). Month: strftime('%Y-%m', col). Quarter: strftime('%Y', col) || '-Q' || ((CAST(strftime('%m', col) AS INTEGER) + 2) / 3).",
-  "postgresql": "Use date_trunc('quarter', col), EXTRACT(YEAR FROM col), to_char(col, 'YYYY-MM') and ILIKE for case-insensitive matching.",
+    "sqlite": "Dates are TEXT 'YYYY-MM-DD'. Year: strftime('%Y', col). Month: strftime('%Y-%m', col). Quarter: strftime('%Y', col) || '-Q' || ((CAST(strftime('%m', col) AS INTEGER) + 2) / 3).",
+    "postgresql": "Use date_trunc('quarter', col), EXTRACT(YEAR FROM col), to_char(col, 'YYYY-MM') and ILIKE for case-insensitive matching.",
 }
 
-SQL_RULES = COMMON_SQL_RULES
-
 TEXT2SQL_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", SQL_RULES),
+    ("system", COMMON_SQL_RULES + "\nIf the tables cannot answer, set can_answer to false and leave sql empty.\n"
+     "Return a structured answer matching this format:\n{format_instructions}"),
     ("human", "{question}"),
 ])
 
 TEXT2SQL_FALLBACK_PROMPT = ChatPromptTemplate.from_messages([
-  ("system", COMMON_SQL_RULES + "\n- Output only the SQL inside ```sql fences."),
-  ("human", "{question}"),
+    ("system", COMMON_SQL_RULES + "\n- If the tables cannot answer, reply exactly NO_ANSWER.\n"
+     "- Output only the SQL inside ```sql fences."),
+    ("human", "{question}"),
 ])
 
 # Used by the graph's SQL repair node when a generated query fails.
 FIX_SQL_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", SQL_RULES),
+    ("system", COMMON_SQL_RULES + "\nIf the tables cannot answer, reply exactly NO_ANSWER."),
     ("human", "{question}"),
     ("ai", "```sql\n{sql}\n```"),
     ("human", "That query failed with this error:\n{error}\nReturn a corrected query."),

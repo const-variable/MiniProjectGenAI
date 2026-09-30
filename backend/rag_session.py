@@ -8,7 +8,7 @@ import logging
 from core.llm import make_chain
 from offline.build_index import build_offline_index
 from online.pipeline import OnlinePipeline
-from extensions.answer_generator import df_to_json
+from extensions.answer_generator import frame_to_table_payload
 from prompts.answer_prompt import OVERVIEW_PROMPT, SUGGEST_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -20,9 +20,9 @@ class TableRAGSession:
         self.source = source
         self.dataset_description = dataset_description.strip()
         self.history: list[dict[str, str]] = []
-        self.index = build_offline_index(source, llm, embedding_model,        # OFFLINE
-                                         notes, raw_queries, self.dataset_description)
-        self.online = OnlinePipeline(llm, self.index, source)                 # ONLINE
+        self.index = build_offline_index(
+            source, llm, embedding_model, notes, raw_queries, self.dataset_description)
+        self.online = OnlinePipeline(llm, self.index, source)
 
         self._overview_chain = make_chain(OVERVIEW_PROMPT, llm)
         self._suggest_chain = make_chain(SUGGEST_PROMPT, llm)
@@ -38,53 +38,60 @@ class TableRAGSession:
                 f"{table} ({source.row_count(table)} rows)" for table in tables)
         self._suggestions = None
 
-    # -------------------------------------------------------------- questions
     def ask(self, question: str) -> dict:
-        result = self.online.run(question, history=self.history[-3:])
-        self.history.append({"question": question, "sql": result["sql"],
-                             "answer": result["answer"][:300]})
+        answer_payload = self.online.run(question, history=self.history[-3:])
+        self.history.append({"question": question, "sql": answer_payload["sql"],
+                     "answer": answer_payload["answer"][:300]})
         self.history = self.history[-3:]
-        return result
+        return answer_payload
 
-    # -------------------------------------------------------------- info for the UI
     @property
     def query_log(self) -> list:
         return self.index.query_log
 
     def profile_text(self) -> str:
-        text = "\n\n".join(
+        dataset_profile = "\n\n".join(
             f'Table "{table}" ({self.source.row_count(table)} rows): {summary}'
             for table, summary in self.index.table_summaries.items())
         relationships = [f"{table_a}.{column_a} -> {table_b}.{column_b}"
                          for table_a, column_a, table_b, column_b in self.source.join_keys()]
         if relationships:
-            text += "\n\nRelationships: " + "; ".join(relationships)
+            dataset_profile += "\n\nRelationships: " + "; ".join(relationships)
         if self.dataset_description:
-            text = f"Dataset context: {self.dataset_description}\n\n{text}"
-        return text
+            dataset_profile = f"Dataset context: {self.dataset_description}\n\n{dataset_profile}"
+        return dataset_profile
 
     def tables_info(self) -> list:
-        types = self.index.metadata_store.types
-        return [{"name": table, "rows": self.source.row_count(table),
-             "summary": self.index.table_summaries[table],
-                 "example_questions": self.index.table_example_questions.get(table, []),
-             "columns": [{"name": column, "type": types[table][column]}
-                     for column in self.source.columns(table)]}
-            for table in self.source.list_tables()]
+        column_types_by_table = self.index.metadata_store.types
+        return [
+            {
+                "name": table,
+                "rows": self.source.row_count(table),
+                "summary": self.index.table_summaries[table],
+                "example_questions": self.index.table_example_questions.get(table, []),
+                "columns": [
+                    {"name": column, "type": column_types_by_table[table][column]}
+                    for column in self.source.columns(table)
+                ],
+            }
+            for table in self.source.list_tables()
+        ]
 
     def suggestions(self) -> list:
         if self._suggestions is None:
             try:
-                text = self._suggest_chain.invoke({"profile": self.profile_text()})
-                lines = [re.sub(r"^[\s\-\*\d\.\)]+", "", ln).strip() for ln in text.splitlines()]
-                self._suggestions = [ln for ln in lines if ln.endswith("?")][:4]
+                suggestion_text = self._suggest_chain.invoke({"profile": self.profile_text()})
+                suggestion_lines = [
+                    re.sub(r"^[\s\-\*\d\.\)]+", "", line).strip()
+                    for line in suggestion_text.splitlines()]
+                self._suggestions = [line for line in suggestion_lines if line.endswith("?")][:4]
             except Exception as error:
                 logger.warning("Question suggestion generation failed (%s)", type(error).__name__)
                 self._suggestions = []
         return self._suggestions
 
     def preview(self, limit: int = 20) -> list:
-        return [{"name": table, **df_to_json(self.source.preview(table, limit), limit)}
+        return [{"name": table, **frame_to_table_payload(self.source.preview(table, limit), limit)}
                 for table in self.source.list_tables()]
 
     def close(self) -> None:

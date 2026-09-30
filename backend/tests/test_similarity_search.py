@@ -26,19 +26,20 @@ def test_table_and_sql_hits_combine_and_keep_best_distance():
         (Document(page_content="fourth log", metadata={"kind": "sql", "tables": ["orders"], "log": 3}), 0.15),
     ])
 
-    tables, similar, score_kind = top_n_tables(hits, query_log, "sales", n=5)
+    candidate_tables, similar_queries, score_kind = top_n_tables(
+        hits, query_log, "sales", candidate_limit=5)
 
     assert score_kind == "distance"
     assert hits.requested_k == 15
-    assert tables == [{"name": "orders", "score": 0.1}, {"name": "products", "score": 0.3}]
-    assert [query["description"] for query in similar] == ["query 0", "query 1", "query 2"]
+    assert candidate_tables == [{"name": "orders", "score": 0.1}, {"name": "products", "score": 0.3}]
+    assert [query["description"] for query in similar_queries] == ["query 0", "query 1", "query 2"]
 
 
 def test_top_n_environment_controls_retrieval_fan_out(monkeypatch):
     monkeypatch.setenv("TOP_N", "12")
     hits = Hits([])
-    tables, similar, score_kind = top_n_tables(hits, [], "question")
+    candidate_tables, similar_queries, score_kind = top_n_tables(hits, [], "question")
     assert hits.requested_k == 36
-    assert tables == []
-    assert similar == []
+    assert candidate_tables == []
+    assert similar_queries == []
     assert score_kind == "distance"

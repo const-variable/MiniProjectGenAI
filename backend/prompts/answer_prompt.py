@@ -8,12 +8,12 @@ from langchain_core.prompts import ChatPromptTemplate
 ANSWER_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
      "You explain data query results to a non-technical user.\n"
-     "- Use ONLY numbers that appear in the result. Never invent or estimate numbers.\n"
-     "- Give the direct answer first, then a 2-3 line summary of what the result shows.\n"
+     "- Use ONLY numbers that appear in the query result. Never invent or estimate numbers.\n"
+     "- Give the direct answer first, then a 2-3 line summary of what the query result shows.\n"
      "- For 'why' questions, say which categories drove the change. The data shows WHAT changed, "
      "not real-world causes, so don't claim causes.\n"
-     "- If the result doesn't answer the question, say what is missing."),
-    ("human", "Question: {question}\n\nSQL used:\n{sql}\n\nResult (CSV):\n{result}"),
+     "- If the query result doesn't answer the question, say what is missing."),
+    ("human", "Question: {question}\n\nSQL used:\n{sql}\n\nQuery result (CSV):\n{query_result}"),
 ])
 
 OVERVIEW_PROMPT = ChatPromptTemplate.from_messages([

@@ -1,36 +1,38 @@
 import { useRef, useState } from "react";
 import ConnectPanel from "./ConnectPanel";
 
-function FilePicker({ title, hint, accept, pattern, files, setFiles }) {
+function FilePicker({ title, hint, accept, pattern, selectedFiles, setFiles }) {
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef(null);
-  const take = (list) => setFiles(Array.from(list).filter((f) => pattern.test(f.name)));
+  const updateSelectedFiles = (fileList) => setFiles(
+    Array.from(fileList).filter((uploadedFile) => pattern.test(uploadedFile.name)));
 
   return (
     <div>
       <div
         className={`dropzone ${dragging ? "dragging" : ""}`}
         onClick={() => inputRef.current.click()}
-        onDragOver={(e) => {
-          e.preventDefault();
+        onDragOver={(event) => {
+          event.preventDefault();
           setDragging(true);
         }}
         onDragLeave={() => setDragging(false)}
-        onDrop={(e) => {
-          e.preventDefault();
+        onDrop={(event) => {
+          event.preventDefault();
           setDragging(false);
-          take(e.dataTransfer.files);
+          updateSelectedFiles(event.dataTransfer.files);
         }}
       >
-        <input ref={inputRef} type="file" accept={accept} multiple hidden onChange={(e) => take(e.target.files)} />
+        <input ref={inputRef} type="file" accept={accept} multiple hidden
+          onChange={(event) => updateSelectedFiles(event.target.files)} />
         <strong>{title}</strong>
         <span className="muted">{hint}</span>
       </div>
-      {files.length > 0 && (
+      {selectedFiles.length > 0 && (
         <ul className="filelist">
-          {files.map((f) => (
-            <li key={f.name}>
-              {f.name} <span className="muted">{(f.size / 1024).toFixed(1)} KB</span>
+          {selectedFiles.map((uploadedFile) => (
+            <li key={uploadedFile.name}>
+              {uploadedFile.name} <span className="muted">{(uploadedFile.size / 1024).toFixed(1)} KB</span>
             </li>
           ))}
         </ul>
@@ -39,24 +41,24 @@ function FilePicker({ title, hint, accept, pattern, files, setFiles }) {
   );
 }
 
-export default function UploadPanel({ onBuild, loading }) {
-  const [mode, setMode] = useState("upload");
-  const [files, setFiles] = useState([]);
-  const [logFiles, setLogFiles] = useState([]);
-  const [descriptions, setDescriptions] = useState("");
+export default function UploadPanel({ onBuildDataset, loading }) {
+  const [sourceMode, setSourceMode] = useState("upload");
+  const [tableFiles, setTableFiles] = useState([]);
+  const [queryLogFiles, setQueryLogFiles] = useState([]);
+  const [columnDescriptions, setColumnDescriptions] = useState("");
   const [datasetDescription, setDatasetDescription] = useState("");
-  const [connection, setConnection] = useState({ url: "", schema: "", tables: "" });
+  const [connectionDetails, setConnectionDetails] = useState({ url: "", schema: "", tables: "" });
 
   return (
     <section className="card upload">
       <div className="source-tabs" role="tablist" aria-label="Data source">
-        <button type="button" role="tab" aria-selected={mode === "upload"} className={mode === "upload" ? "active" : ""}
-          onClick={() => setMode("upload")}>Upload files</button>
-        <button type="button" role="tab" aria-selected={mode === "connect"} className={mode === "connect" ? "active" : ""}
-          onClick={() => setMode("connect")}>Connect database</button>
+        <button type="button" role="tab" aria-selected={sourceMode === "upload"} className={sourceMode === "upload" ? "active" : ""}
+          onClick={() => setSourceMode("upload")}>Upload files</button>
+        <button type="button" role="tab" aria-selected={sourceMode === "connect"} className={sourceMode === "connect" ? "active" : ""}
+          onClick={() => setSourceMode("connect")}>Connect database</button>
       </div>
 
-      {mode === "upload" ? (
+      {sourceMode === "upload" ? (
         <>
           <h2>Tables</h2>
           <FilePicker
@@ -64,12 +66,12 @@ export default function UploadPanel({ onBuild, loading }) {
             hint="or click to choose · .csv, .txt, .tsv or .xlsx Excel workbook · comma, tab, | or ; separated"
             accept=".csv,.txt,.tsv,.xlsx"
             pattern={/\.(csv|txt|tsv|xlsx)$/i}
-            files={files}
-            setFiles={setFiles}
+            selectedFiles={tableFiles}
+            setFiles={setTableFiles}
           />
         </>
       ) : (
-        <ConnectPanel onChange={setConnection} />
+        <ConnectPanel onChange={setConnectionDetails} />
       )}
 
       <h2>
@@ -80,16 +82,16 @@ export default function UploadPanel({ onBuild, loading }) {
         hint="a .sql or .txt file of SELECT queries separated by ; · table names must match the source"
         accept=".sql,.txt"
         pattern={/\.(sql|txt)$/i}
-        files={logFiles}
-        setFiles={setLogFiles}
+        selectedFiles={queryLogFiles}
+        setFiles={setQueryLogFiles}
       />
 
       <label className="field">
         Explain unclear columns, one per line <span className="muted">(optional)</span>
         <textarea
           rows={3}
-          value={descriptions}
-          onChange={(e) => setDescriptions(e.target.value)}
+          value={columnDescriptions}
+          onChange={(event) => setColumnDescriptions(event.target.value)}
           placeholder={"marks: exam score out of 100\namt: order amount in rupees"}
         />
       </label>
@@ -104,9 +106,9 @@ export default function UploadPanel({ onBuild, loading }) {
         />
       </label>
 
-      <button className="primary" disabled={(mode === "upload" ? !files.length : !connection.url.trim()) || loading}
-        onClick={() => onBuild(mode, mode === "upload" ? { files } : connection,
-          logFiles, descriptions, datasetDescription)}>
+      <button className="primary" disabled={(sourceMode === "upload" ? !tableFiles.length : !connectionDetails.url.trim()) || loading}
+        onClick={() => onBuildDataset(sourceMode, sourceMode === "upload" ? { files: tableFiles } : connectionDetails,
+          queryLogFiles, columnDescriptions, datasetDescription)}>
         {loading ? "Summarising tables and building the index…" : "Build index"}
       </button>
     </section>

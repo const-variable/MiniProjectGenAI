@@ -1,8 +1,7 @@
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
-from langchain_core.runnables import RunnableLambda
 
 from offline.summarizer import Summarizer
-from prompts.schemas import QueryDescriptions, QueryDescription, TableSummary
+from prompts.schemas import TableSummary
 
 
 def test_query_summary_plain_text_fallback_parses_numbered_lines():
@@ -17,24 +16,37 @@ def test_query_summary_plain_text_fallback_parses_numbered_lines():
         "Summarizes orders", "Summarizes products"]
 
 
-class StructuredSummaryModel(FakeListChatModel):
-    def with_structured_output(self, schema):
-        if schema is TableSummary:
-            return RunnableLambda(lambda _input: TableSummary(
-                summary="Table summary.", example_questions=["Which rows are present?"]))
-        if schema is QueryDescriptions:
-            return RunnableLambda(lambda _input: QueryDescriptions(queries=[
-                QueryDescription(index=1, description="Orders by date"),
-                QueryDescription(index=2, description="Product catalog"),
-            ]))
-        raise AssertionError(f"Unexpected structured schema: {schema}")
-
-
-def test_query_summary_uses_structured_output_when_supported():
+def test_query_summary_parser_returns_pydantic_descriptions():
     query_log = [
         {"sql": "SELECT * FROM orders", "tables": ["orders"], "description": ""},
         {"sql": "SELECT * FROM products", "tables": ["products"], "description": ""},
     ]
-    Summarizer(StructuredSummaryModel(responses=[])).summarise_queries(query_log)
+    Summarizer(FakeListChatModel(responses=[
+        '{"queries":[{"query_number":1,"description":"Orders by date"},'
+        '{"query_number":2,"description":"Product catalog"}]}'
+    ])).summarise_queries(query_log)
     assert [entry["description"] for entry in query_log] == [
         "Orders by date", "Product catalog"]
+
+
+def test_table_summary_parser_returns_pydantic_model():
+    summary = '{"summary":"Orders record purchases.","example_questions":["What sold?"]}'
+    summarizer = Summarizer(FakeListChatModel(responses=[summary]))
+    parsed = summarizer.table_chain.invoke({
+        "metadata": "Orders table",
+        "queries": "(none)",
+        "dataset_description": "Retail orders",
+    })
+    assert isinstance(parsed, TableSummary)
+    assert parsed.summary == "Orders record purchases."
+
+
+def test_table_summary_parser_error_uses_text_prompt_fallback():
+    text_summary = "Orders record purchases and their total amounts."
+    summarizer = Summarizer(FakeListChatModel(responses=["not JSON", text_summary]))
+    summaries = summarizer.summarise_tables([{
+        "metadata": "Orders table",
+        "queries": "(none)",
+        "dataset_description": "Retail orders",
+    }])
+    assert summaries == [TableSummary(summary=text_summary, example_questions=[])]

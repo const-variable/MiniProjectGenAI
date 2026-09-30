@@ -1,8 +1,8 @@
 import ResultTable from "./ResultTable";
 
 export default function AnswerDetails({ message }) {
-  const { topN = [], selected = [], similar = [], sql, result, scoreKind = "distance",
-    selectionReason, sqlExplanation, question, standaloneQuestion } = message;
+  const { candidateTables = [], selectedTables = [], similarQueries = [], sql, queryResult,
+    scoreKind = "distance", selectionReason, sqlExplanation, question, standaloneQuestion } = message;
   return (
     <details className="details">
       <summary>How this was answered</summary>
@@ -12,9 +12,9 @@ export default function AnswerDetails({ message }) {
 
       <h4>1 · Similarity search → Top N tables</h4>
       <div className="chips small">
-        {topN.map((t) => (
-          <span key={t.name} className={`chip static ${selected.includes(t.name) ? "picked" : ""}`}>
-            {t.name} <span className="score">{t.score.toFixed(2)}</span>
+        {candidateTables.map((candidateTable) => (
+          <span key={candidateTable.name} className={`chip static ${selectedTables.includes(candidateTable.name) ? "picked" : ""}`}>
+            {candidateTable.name} <span className="score">{candidateTable.score.toFixed(2)}</span>
           </span>
         ))}
       </div>
@@ -22,22 +22,22 @@ export default function AnswerDetails({ message }) {
 
       <h4>2 · LLM table selection → Top K tables</h4>
       <div className="chips small">
-        {selected.map((t) => (
-          <span key={t} className="chip static picked">
-            {t}
+        {selectedTables.map((tableName) => (
+          <span key={tableName} className="chip static picked">
+            {tableName}
           </span>
         ))}
         {selectionReason && <p className="hint">{selectionReason}</p>}
       </div>
 
-      {similar.length > 0 && (
+      {similarQueries.length > 0 && (
         <>
           <h4>Similar past queries (from logs)</h4>
-          {similar.map((q, i) => (
-            <div key={i} className="example">
-              <span className="muted">{q.description}</span>
+          {similarQueries.map((query, queryIndex) => (
+            <div key={queryIndex} className="example">
+              <span className="muted">{query.description}</span>
               <pre className="sql small">
-                <code>{q.sql}</code>
+                <code>{query.sql}</code>
               </pre>
             </div>
           ))}
@@ -51,7 +51,7 @@ export default function AnswerDetails({ message }) {
       </pre>
 
       <h4>4 · Result</h4>
-      <ResultTable columns={result?.columns} rows={result?.rows} />
+      <ResultTable columns={queryResult?.columns} rows={queryResult?.rows} />
     </details>
   );
 }

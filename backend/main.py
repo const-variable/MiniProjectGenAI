@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from core.embedding_model import load_embedding_model
 from core.llm import is_llm_provider_error, load_llm
-from core.loader import _decode
+from core.loader import decode_text
 from offline.sql_query_logs import parse_query_logs
 from offline.table_metadata_store import parse_notes
 from rag_session import TableRAGSession
@@ -27,7 +27,6 @@ if not os.getenv("GROQ_API_KEY"):
     raise RuntimeError("GROQ_API_KEY is not set. Create backend/.env (copy .env.example) and fill it in.")
 
 MAX_BYTES = int(float(os.getenv("MAX_UPLOAD_MB", "20")) * 1024 * 1024)
-MAX_TABLES_PER_UPLOAD = int(os.getenv("MAX_TABLES_PER_UPLOAD", "20"))
 LOG_EXTENSIONS = (".sql", ".txt")
 models = {}                      # LLM + embedding model, loaded once at startup
 sessions = SessionStore()
@@ -49,13 +48,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Table RAG API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in os.getenv("FRONTEND_ORIGINS", "http://localhost:5173").split(",")],
+    allow_origins=[origin.strip() for origin in os.getenv("FRONTEND_ORIGINS", "http://localhost:5173").split(",")],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
-# ---------------------------------------------------------------- schemas
 
 class ColumnInfo(BaseModel):
     name: str
@@ -77,7 +74,7 @@ class RelationshipInfo(BaseModel):
     column_b: str
 
 
-class ResultTable(BaseModel):
+class QueryResult(BaseModel):
     columns: List[str]
     rows: List[List[Any]]
 
@@ -112,7 +109,7 @@ class AskResponse(BaseModel):
     top_n_tables: List[CandidateTable]
     selected_tables: List[str]
     similar_queries: List[SimilarQuery]
-    result: ResultTable
+    result: QueryResult
     error: Optional[str] = None
     selection_reason: Optional[str] = None
     sql_explanation: Optional[str] = None
@@ -121,44 +118,47 @@ class AskResponse(BaseModel):
 
 
 def get_session(session_id: str) -> TableRAGSession:
-    s = sessions.get(session_id)
-    if s is None:
+    session = sessions.get(session_id)
+    if session is None:
         raise HTTPException(404, "Session not found or expired. Please build the dataset again.")
-    return s
+    return session
 
 
-def session_payload(sid: str, s: TableRAGSession) -> dict:
-    return {"session_id": sid, "summary": s.summary, "query_logs": len(s.query_log),
-            "tables": s.tables_info(), "source": {"kind": s.source.kind,
-            "dialect": s.source.dialect, "name": s.source.display_name()},
+def session_payload(session_id: str, session: TableRAGSession) -> dict:
+    return {"session_id": session_id, "summary": session.summary,
+            "query_logs": len(session.query_log), "tables": session.tables_info(),
+            "source": {"kind": session.source.kind, "dialect": session.source.dialect,
+                       "name": session.source.display_name()},
             "relationships": [{"table_a": table_a, "column_a": column_a,
                                "table_b": table_b, "column_b": column_b}
-                              for table_a, column_a, table_b, column_b in s.source.join_keys()]}
+                              for table_a, column_a, table_b, column_b in session.source.join_keys()]}
 
 
-def read_query_logs(query_logs: Optional[List[UploadFile]]) -> list[str]:
-    queries = []
-    for file in query_logs or []:
-        name = file.filename or "logs"
-        if not name.lower().endswith(LOG_EXTENSIONS):
-            raise HTTPException(400, f"{name}: query logs must be .sql or .txt files.")
-        queries.extend(parse_query_logs(_decode(file.file.read())))
-    return queries
+def read_query_logs(sql_files: Optional[List[UploadFile]]) -> list[str]:
+    sql_statements = []
+    for query_log_file in sql_files or []:
+        filename = query_log_file.filename or "logs"
+        if not filename.lower().endswith(LOG_EXTENSIONS):
+            raise HTTPException(400, f"{filename}: query logs must be .sql or .txt files.")
+        sql_statements.extend(parse_query_logs(decode_text(query_log_file.file.read())))
+    return sql_statements
 
 
 def build_session(source, descriptions: str, dataset_description: str,
-                  queries: list[str]) -> tuple[str, TableRAGSession]:
+                  sql_statements: list[str]) -> dict:
     try:
         session = TableRAGSession(source, models["llm"], models["embeddings"],
-                                  notes=parse_notes(descriptions), raw_queries=queries,
+                                  notes=parse_notes(descriptions), raw_queries=sql_statements,
                                   dataset_description=dataset_description)
-    except Exception:
+    except Exception as error:
         source.close()
-        raise
-    return sessions.create(session), session
+        logger.warning("Indexing failed for %s source (%s)", source.kind, type(error).__name__)
+        if is_llm_provider_error(error):
+            raise HTTPException(502, PROVIDER_ERROR_DETAIL) from error
+        raise HTTPException(500, "Failed to build the knowledge base.") from error
+    return session_payload(sessions.create(session), session)
 
 
-# ---------------------------------------------------------------- endpoints
 # Plain `def` (not async): FastAPI runs these in a thread pool, so a slow
 # LLM call for one user doesn't block everyone else.
 
@@ -174,21 +174,14 @@ def upload(
     descriptions: str = Form(""),
     dataset_description: str = Form(""),
 ):
-    """Tables (+ optional SQL query logs) -> OFFLINE VECTOR INDEX CREATION."""
-    if len(files) > MAX_TABLES_PER_UPLOAD:
-        raise HTTPException(400, f"Upload contains more than {MAX_TABLES_PER_UPLOAD} table files.")
-    queries = read_query_logs(query_logs)
+    """Build an index from uploaded table files and optional SQL logs."""
+    sql_statements = read_query_logs(query_logs)
     try:
-        source = UploadSource([(f.filename or "table", f.file.read()) for f in files], MAX_BYTES)
+        source = UploadSource([(table_file.filename or "table", table_file.file.read())
+                               for table_file in files], MAX_BYTES)
     except ValueError as error:
         raise HTTPException(400, str(error)) from error
-    try:
-        sid, session = build_session(source, descriptions, dataset_description, queries)
-    except Exception as error:
-        logger.warning("Upload indexing failed (%s)", type(error).__name__)
-        detail = PROVIDER_ERROR_DETAIL if is_llm_provider_error(error) else "Failed to build the knowledge base."
-        raise HTTPException(502 if is_llm_provider_error(error) else 500, detail) from error
-    return session_payload(sid, session)
+    return build_session(source, descriptions, dataset_description, sql_statements)
 
 
 @app.post("/connect", response_model=UploadResponse)
@@ -200,45 +193,38 @@ def connect_database(
     descriptions: str = Form(""),
     dataset_description: str = Form(""),
 ):
-    """Connect a read-only database source and build its offline index."""
-    queries = read_query_logs(query_logs)
+    """Connect to a database and build an index from its selected tables."""
+    sql_statements = read_query_logs(query_logs)
+    table_names = [table.strip() for table in include_tables.split(",") if table.strip()] or None
     try:
-        tables = [table.strip() for table in include_tables.split(",") if table.strip()] or None
-        source = DBSource(connection_url, db_schema.strip() or None, tables)
+        source = DBSource(connection_url, db_schema.strip() or None, table_names)
     except ValueError as error:
         raise HTTPException(400, str(error)) from error
-    try:
-        sid, session = build_session(source, descriptions, dataset_description, queries)
-    except Exception as error:
-        logger.warning("Database indexing failed (%s)", type(error).__name__)
-        detail = PROVIDER_ERROR_DETAIL if is_llm_provider_error(error) else "Failed to build the knowledge base."
-        raise HTTPException(502 if is_llm_provider_error(error) else 500, detail) from error
-    return session_payload(sid, session)
+    return build_session(source, descriptions, dataset_description, sql_statements)
 
 
 @app.post("/connect/test")
 def test_database_connection(connection_url: str = Form(...), db_schema: str = Form("")):
-    """Check a database connection without loading models or building an index."""
     try:
         source = DBSource(connection_url, db_schema.strip() or None)
-        tables = source.list_tables()
-        return {"connected": True, "tables": tables, "count": len(tables),
-                "dialect": source.dialect, "name": source.display_name()}
     except ValueError as error:
         raise HTTPException(400, str(error)) from error
+    try:
+        table_names = source.list_tables()
+        return {"connected": True, "tables": table_names, "count": len(table_names),
+                "dialect": source.dialect, "name": source.display_name()}
     finally:
-        if "source" in locals():
-            source.close()
+        source.close()
 
 
 @app.post("/ask", response_model=AskResponse)
-def ask(req: AskRequest):
-    """Question -> ONLINE TEXT2SQL."""
-    if not req.question.strip():
+def ask(request: AskRequest):
+    """Retrieve tables, generate guarded SQL, and answer from its query rows."""
+    if not request.question.strip():
         raise HTTPException(400, "Question is empty.")
-    s = get_session(req.session_id)
+    session = get_session(request.session_id)
     try:
-        return s.ask(req.question.strip())
+        return session.ask(request.question.strip())
     except Exception as error:
         logger.warning("Ask endpoint failed (%s)", type(error).__name__)
         if is_llm_provider_error(error):

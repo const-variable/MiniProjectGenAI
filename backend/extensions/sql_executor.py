@@ -6,25 +6,14 @@ user gets an answer. Two checks run first:
   - grounding: the query must read from a table in the dataset (no answers typed
                from the LLM's own memory, e.g. SELECT 'Oklahoma City' AS capital)
 """
-import os
-
-from extensions.sql_guard import parse_single_select
-from offline.sql_query_logs import tables_in_query
+from extensions.sql_guard import tables_in_query
 
 NO_ANSWER = "NO_ANSWER"
-MAX_RETRIES = 2
+MAX_RETRIES = 2  # hyperparameter
 
 
 def is_no_answer(sql: str) -> bool:
     return sql.strip().upper().startswith(NO_ANSWER)
-
-
-def is_safe(sql: str, dialect: str = "sqlite") -> bool:
-    try:
-        parse_single_select(sql, dialect)
-        return True
-    except ValueError:
-        return False
 
 
 class SQLExecutor:
@@ -32,9 +21,8 @@ class SQLExecutor:
         self.source = source
 
     def run(self, sql: str):
-        if not is_safe(sql, self.source.dialect):
-            parse_single_select(sql, self.source.dialect)
+        # tables_in_query parses with the guard, so unsafe SQL raises before execution.
         if not tables_in_query(sql, self.source.list_tables(), self.source.dialect):
             raise ValueError("The query does not read from a table in this dataset. Use FROM <table> and "
                              "take the answer from the data, or reply NO_ANSWER if the data can't answer.")
-        return self.source.query(sql, max_rows=int(os.getenv("MAX_RESULT_ROWS", "1000")))
+        return self.source.query(sql)

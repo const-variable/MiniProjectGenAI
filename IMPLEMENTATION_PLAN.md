@@ -274,8 +274,7 @@ Edges:
 - The ensemble returns documents without distances. For `hybrid`, rank tables by reciprocal-rank score (higher is better). Return a `score_kind: "distance" | "rank"` field so `AnswerDetails.jsx` can label the score correctly ("lower is more similar" vs "higher is better").
 - Keep `N_CANDIDATES` and `K_SELECTED` configurable via env vars `TOP_N` and `TOP_K`. Phase 5 needs them for the ablations.
 
-### Step 2.5: Tracing and caching
-- In `.env.example`, add commented-out LangSmith variables: `LANGSMITH_TRACING=true`, `LANGSMITH_API_KEY=`, `LANGSMITH_PROJECT=table-rag`. With these set, LangChain and LangGraph trace automatically; no code change is needed. Document this in the README.
+### Step 2.5: Caching
 - Optional: `LLM_CACHE=sqlite` → `set_llm_cache(SQLiteCache(".llm_cache.db"))` in `core/llm.py`. This makes repeated demo and eval runs cheap. Add `.llm_cache.db` to `.gitignore`.
 
 ### Step 2.6: Tests for Phase 2
@@ -293,7 +292,7 @@ Edges:
 ## Phase 3: Close the gaps against the Stage 1 submission
 
 Branch: `feature/plan-gaps`.
-
+## Use Groq and open-weight models; keep the Phase 3 focus on product features rather than additional graph work.
 ### Step 3.1: Excel upload
 - Add `openpyxl` to requirements.
 - `ALLOWED_EXTENSIONS` gains `.xlsx` and `.xls`. `.xls` also needs `xlrd`, so either add it or support `.xlsx` only and say so in the README.
@@ -337,35 +336,35 @@ Branch: `feature/hardening`.
 
 ### Step 4.1: Bug fixes
 Most of these are already solved by Phase 1; verify each one and add a regression test.
-- [ ] SQLite `replace()` function no longer blocked (sqlglot guard)
-- [ ] `;` inside a string literal no longer rejected
-- [ ] `tables_in_query` handles comma joins, CTEs, schema-qualified and quoted names
-- [ ] Root `main.py` removed (Phase 0)
-- [ ] `/preview` quotes table names per dialect (Phase 1 `quote()`)
-- [ ] `similarity_search`: the `k=10` hit count is hard-coded, so with more than 10 documents some tables are never scored. Use `k = max(10, TOP_N * 3)`.
-- [ ] `Summarizer.summarise_queries` parses numbered lines. Move it to structured output (`list[QueryDescription]`), keeping the regex as a fallback.
-- [ ] `sessions.py` docstring says "session_id -> Engine". Update it to `TableRAGSession`, and make TTL cleanup call `close()` (Phase 1).
+- [x] SQLite `replace()` function no longer blocked (sqlglot guard)
+- [x] `;` inside a string literal no longer rejected
+- [x] `tables_in_query` handles comma joins, CTEs, schema-qualified and quoted names
+- [x] Root `main.py` removed (Phase 0)
+- [x] `/preview` quotes table names per dialect (Phase 1 `quote()`)
+- [x] `similarity_search`: use `k = max(10, TOP_N * 3)` so all tables can be scored.
+- [x] `Summarizer.summarise_queries` uses structured output with a numbered-text fallback.
+- [x] `sessions.py` documents `TableRAGSession`, and TTL cleanup calls `close()`.
 
 ### Step 4.2: Robustness
 - Upload limits:
   - keep `MAX_UPLOAD_MB`
-  - add `MAX_TABLES_PER_UPLOAD` (default 20)
-  - add `MAX_ROWS_PER_TABLE` (default 1,000,000), rejecting larger files with a clear message
+  - [x] add `MAX_TABLES_PER_UPLOAD` (default 20)
+  - [x] add `MAX_ROWS_PER_TABLE` (default 1,000,000), rejecting larger files with a clear message
 - Query limits:
-  - `MAX_RESULT_ROWS` (default 1000) passed to `source.query`
-  - `statement_timeout` for Postgres (Phase 1)
-  - for SQLite, `sqlite3` progress handler or `conn.set_progress_handler` to abort queries running longer than about 15 s
+  - [x] `MAX_RESULT_ROWS` (default 1000) passed to `source.query`
+  - [x] `statement_timeout` for Postgres (Phase 1)
+  - [x] for SQLite, `sqlite3` progress handler aborts queries running longer than about 15 s
 - LLM errors:
-  - wrap provider errors such as rate limits and auth failures in a clear message: *"The LLM provider returned an error: …"*
-  - don't return raw stack traces from `/ask`
+  - [x] wrap provider errors such as rate limits and auth failures in a clear message: *"The LLM provider returned an error: …"*
+  - [x] don't return raw stack traces from `/ask`
 - Logging:
-  - use `logging` instead of silent `except Exception: pass` blocks (e.g. in `summarizer.py`, `rag_session.py`)
-  - log the step name and error at WARNING level
-  - never log connection URLs or API keys
+  - [x] use `logging` instead of silent exception handling in the affected fallbacks
+  - [x] log the step name and exception type at WARNING level
+  - [x] never log connection URLs or API keys
 - Frontend:
-  - disable "Build index" while a request is running (already done)
-  - show a progress message like "Summarising 11 tables…"
-  - show a useful message on 400 and 500 responses (already mostly done)
+  - [x] disable "Build index" while a request is running
+  - [x] show a table-summarization progress message while building
+  - [x] show a useful message on 400 and 500 responses
 
 ### Step 4.3: Test coverage
 Target: every module in `core/`, `sources/`, `offline/`, `extensions/` and `online/` has at least one test, all running offline with fakes.
@@ -406,7 +405,7 @@ Add `.github/workflows/ci.yml`:
 - Update the folder tree (`sources/`, `extensions/sql_guard.py`, `tests/`, `docker-compose.yml`)
 - Update the Offline and Online step tables (the LangGraph node names)
 - Add a "Connect a database" section: SQLite example, Postgres with docker-compose, read-only user, env vars
-- Update the configuration table: `MAX_DB_TABLES`, `PROFILE_SAMPLE_ROWS`, `TOP_N`, `TOP_K`, `RETRIEVER`, `LLM_CACHE`, LangSmith, `MAX_RESULT_ROWS`
+- Update the configuration table: `MAX_DB_TABLES`, `PROFILE_SAMPLE_ROWS`, `MAX_TABLES_PER_UPLOAD`, `MAX_ROWS_PER_TABLE`, `MAX_RESULT_ROWS`, `SQLITE_QUERY_TIMEOUT_SECONDS`, `TOP_N`, `TOP_K`, `RETRIEVER`, `LLM_CACHE`
 - Add a "Running tests" section
 - Update Limitations: remove the items that are now fixed, and add new ones (e.g. "database stats are computed from a sample")
 

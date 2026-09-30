@@ -19,7 +19,7 @@ class TableSummary(BaseModel):
 
 
 class QueryDescription(BaseModel):
-    index: int = Field(description="The 1-based position of this SQL query in the input")
+    query_number: int = Field(description="The 1-based position of this SQL query in the input")
     description: str = Field(description="A concise plain-English description of the query")
 
 

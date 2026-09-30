@@ -12,7 +12,7 @@ TABLE_SUMMARY_PROMPT = ChatPromptTemplate.from_messages([
      "five useful business questions this table can help answer. Say what the table "
      "contains, what its important columns mean, and which kinds of questions it can answer. "
      "If example queries are given, also describe how the table is typically queried. "
-     "Use only the information given."),
+     "Use only the information given.\n{format_instructions}"),
     ("human", "Dataset context: {dataset_description}\n\nTable metadata:\n{metadata}\n\n"
      "Example queries that use this table:\n{queries}"),
 ])
@@ -37,7 +37,8 @@ SQL_SUMMARY_PROMPT = ChatPromptTemplate.from_messages([
 
 SQL_SUMMARY_STRUCTURED_PROMPT = ChatPromptTemplate.from_messages([
     ("system",
-     "For every numbered SQL query, return its 1-based index and one short plain-English line "
-     "describing the question it answers. Include every input query exactly once."),
+     "For every numbered SQL query, return its 1-based query number and one short plain-English line "
+     "describing the question it answers. Include every input query exactly once.\n"
+     "{format_instructions}"),
     ("human", "{queries}"),
 ])

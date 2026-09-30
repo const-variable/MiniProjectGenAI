@@ -10,31 +10,35 @@ import pandas as pd
 from core.loader import clean_name
 
 
-def _fmt(x) -> str:
-    return f"{x:,.2f}".rstrip("0").rstrip(".")
+def _format_number(number) -> str:
+    return f"{number:,.2f}".rstrip("0").rstrip(".")
 
 
-def describe_column(col: str, s: pd.Series, ctype: str, note: str = "",
+def describe_column(column_name: str, column_values: pd.Series, column_type: str, note: str = "",
                     dialect: str = "sqlite", native_type: str = "") -> str:
-    nonnull = s.dropna()
-    if ctype == "number" and len(nonnull):
-        body = (f"number; min {_fmt(nonnull.min())}, max {_fmt(nonnull.max())}, "
-                f"average {_fmt(nonnull.mean())}")
-    elif ctype == "date" and len(nonnull):
+    nonnull_values = column_values.dropna()
+    if column_type == "number" and len(nonnull_values):
+        description = (f"number; min {_format_number(nonnull_values.min())}, "
+                       f"max {_format_number(nonnull_values.max())}, "
+                       f"average {_format_number(nonnull_values.mean())}")
+    elif column_type == "date" and len(nonnull_values):
+        # Uploads store dates as TEXT in SQLite; real databases keep their native type.
         date_type = "TEXT 'YYYY-MM-DD'" if dialect == "sqlite" else (native_type or "DATE/TIMESTAMP")
-        body = f"date ({date_type}); from {nonnull.min().date()} to {nonnull.max().date()}"
-    elif ctype == "category":
-        counts = nonnull.astype(str).value_counts()
-        more = f" (30 most common of {len(counts)})" if len(counts) > 30 else ""
-        body = f"category; values{more}: {', '.join(counts.index[:30])}"
+        description = (f"date ({date_type}); from {nonnull_values.min().date()} "
+                       f"to {nonnull_values.max().date()}")
+    elif column_type == "category":
+        value_counts = nonnull_values.astype(str).value_counts()
+        truncated_note = f" (30 most common of {len(value_counts)})" if len(value_counts) > 30 else ""
+        description = f"category; values{truncated_note}: {', '.join(value_counts.index[:30])}"
     else:
-        body = f"{ctype}; {nonnull.nunique()} distinct, e.g. {', '.join(nonnull.astype(str).head(3))}"
-    missing = s.isna().mean()
-    if missing:
-        body += f"; {missing:.0%} missing"
+        description = (f"{column_type}; {nonnull_values.nunique()} distinct, "
+                       f"e.g. {', '.join(nonnull_values.astype(str).head(3))}")
+    missing_share = column_values.isna().mean()
+    if missing_share:
+        description += f"; {missing_share:.0%} missing"
     if note:
-        body += f"; meaning: {note}"
-    return f"{col}: {body}"
+        description += f"; meaning: {note}"
+    return f"{column_name}: {description}"
 
 
 def parse_notes(text: str) -> dict:
@@ -42,9 +46,9 @@ def parse_notes(text: str) -> dict:
     notes = {}
     for line in (text or "").splitlines():
         if ":" in line:
-            key, val = line.split(":", 1)
-            if val.strip():
-                notes[clean_name(key)] = val.strip()
+            column_key, meaning = line.split(":", 1)
+            if meaning.strip():
+                notes[clean_name(column_key)] = meaning.strip()
     return notes
 
 
@@ -76,13 +80,13 @@ class TableMetadataStore:
 
     def joins_among(self, names: list) -> list:
         return [f"{table_a}.{column_a} = {table_b}.{column_b}"
-            for table_a, column_a, table_b, column_b in self.join_keys
-            if table_a in names and table_b in names]
+                for table_a, column_a, table_b, column_b in self.join_keys
+                if table_a in names and table_b in names]
 
     def schema_for(self, names: list) -> str:
         """Full metadata for the given tables: what the Text2SQL prompt receives."""
-        parts = [self.metadata[t] for t in names]
+        schema_parts = [self.metadata[table] for table in names]
         joins = self.joins_among(names)
         if joins:
-            parts.append("Join keys: " + "; ".join(joins))
-        return "\n\n".join(parts)
+            schema_parts.append("Join keys: " + "; ".join(joins))
+        return "\n\n".join(schema_parts)

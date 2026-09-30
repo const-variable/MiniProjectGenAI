@@ -7,15 +7,12 @@
   Step 5  Vector Store                -> Embeddings Index
 """
 from dataclasses import dataclass
-import logging
+
 from core.loader import classify_columns
 from offline.sql_query_logs import build_query_log
 from offline.summarizer import Summarizer
 from offline.table_metadata_store import TableMetadataStore
 from offline.vector_store import VectorStore, sql_document, table_document
-from prompts.schemas import TableSummary
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -30,51 +27,38 @@ class OfflineIndex:
 def build_offline_index(source, llm, embedding_model, notes: dict | None = None,
                         raw_queries: list | None = None,
                         dataset_description: str = "") -> OfflineIndex:
-    # Step 1: Table Metadata Store
+    # Step 1: Profile tables before assembling schema metadata.
     tables = source.list_tables()
-    frames = {table: source.profile_frame(table) for table in tables}
-    types = {table: classify_columns(frame) for table, frame in frames.items()}
+    types = {table: classify_columns(source.profile_frame(table)) for table in tables}
     metadata_store = TableMetadataStore(source, types, notes, dataset_description)
 
-    # Step 2: SQL Query Logs
+    # Step 2: Attach each logged query to its referenced source tables.
     query_log = build_query_log(raw_queries or [], tables, source.dialect)
 
-    # Step 3: Summarization Prompt -> LLM -> Table/SQL Summary
+    # Step 3: Summarize table profiles and useful query patterns.
     summarizer = Summarizer(llm)
     summarizer.summarise_queries(query_log)
     summary_inputs = []
     for table in tables:
-        queries = [q["sql"] for q in query_log if table in q["tables"]][:10]
+        table_queries = [entry["sql"] for entry in query_log if table in entry["tables"]][:10]
         summary_inputs.append({
             "metadata": metadata_store.get(table),
-            "queries": "\n\n".join(queries) or "(no query logs provided)",
+            "queries": "\n\n".join(table_queries) or "(no query logs provided)",
             "dataset_description": dataset_description.strip() or "(not provided)",
         })
-    try:
-        summaries = summarizer.table_chain.batch(
-            summary_inputs, config={"max_concurrency": 5}, return_exceptions=True)
-    except Exception as error:
-        logger.warning("Batch table summarization failed (%s); using metadata fallback", type(error).__name__)
-        summaries = [RuntimeError("Table summary failed") for _ in tables]
-    table_summaries = {}
-    table_example_questions = {}
-    for table, frame, summary in zip(tables, frames.values(), summaries):
-        if isinstance(summary, Exception):
-            summary = f'Table with {source.row_count(table)} rows and columns: {", ".join(frame.columns)}.'
-        if isinstance(summary, TableSummary):
-            table_summaries[table] = summary.summary.strip()
-            table_example_questions[table] = summary.example_questions
-        elif isinstance(summary, dict):
-            table_summaries[table] = str(summary.get("summary", "")).strip()
-            table_example_questions[table] = list(summary.get("example_questions", []))
-        else:
-            table_summaries[table] = str(summary).strip()
-            table_example_questions[table] = []
+    summaries = summarizer.summarise_tables(summary_inputs)
+    table_summaries = {table: summary.summary.strip() for table, summary in zip(tables, summaries)}
+    table_example_questions = {table: summary.example_questions
+                               for table, summary in zip(tables, summaries)}
 
-    # Steps 4 + 5: Embedding Model -> Vector Store (Embeddings Index)
-    documents = [table_document(t, table_summaries[t], source.columns(t), table_example_questions[t])
-                 for t in tables]
-    documents += [sql_document(i, entry) for i, entry in enumerate(query_log)]
-    vector_store = VectorStore(documents, embedding_model)
+    # Steps 4 + 5: Embed summaries for question-time retrieval.
+    search_documents = [
+        table_document(table, table_summaries[table], source.columns(table),
+                       table_example_questions[table])
+        for table in tables
+    ]
+    search_documents += [sql_document(query_index, query_entry)
+                         for query_index, query_entry in enumerate(query_log)]
+    vector_store = VectorStore(search_documents, embedding_model)
 
     return OfflineIndex(metadata_store, query_log, table_summaries, table_example_questions, vector_store)

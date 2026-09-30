@@ -12,15 +12,17 @@ MAX_LOG_QUERIES = 40
 logger = logging.getLogger(__name__)
 
 
-def parse_query_logs(text: str) -> list:
+def parse_query_logs(log_text: str) -> list:
     """Split a log file into individual SELECT queries (comments removed)."""
-    text = re.sub(r"/\*.*?\*/", " ", text or "", flags=re.S)
-    queries = []
-    for part in text.split(";"):
-        q = "\n".join(ln for ln in part.splitlines() if not ln.strip().startswith("--")).strip()
-        if re.match(r"(?is)^(select|with)\b", q):
-            queries.append(q)
-    return queries
+    log_text = re.sub(r"/\*.*?\*/", " ", log_text or "", flags=re.S)
+    sql_statements = []
+    for statement_part in log_text.split(";"):
+        sql_statement = "\n".join(
+            line for line in statement_part.splitlines()
+            if not line.strip().startswith("--")).strip()
+        if re.match(r"(?is)^(select|with)\b", sql_statement):
+            sql_statements.append(sql_statement)
+    return sql_statements
 
 
 def tables_in_query(sql: str, known_tables, dialect: str = "sqlite") -> list:
@@ -38,14 +40,12 @@ def tables_in_query(sql: str, known_tables, dialect: str = "sqlite") -> list:
     return found
 
 
-def build_query_log(queries: list, tables: list[str], dialect: str = "sqlite") -> list:
-    """Keep queries that use at least one uploaded table.
-    Each entry: {'sql', 'tables', 'description'} (description is filled by the summarizer)."""
-    log = []
-    for q in queries:
-        if len(log) >= MAX_LOG_QUERIES:
+def build_query_log(sql_statements: list, source_tables: list[str], dialect: str = "sqlite") -> list:
+    query_log = []
+    for sql_statement in sql_statements:
+        if len(query_log) >= MAX_LOG_QUERIES:
             break
-        used = tables_in_query(q, tables, dialect)
-        if used:
-            log.append({"sql": q, "tables": used, "description": ""})
-    return log
+        referenced_tables = tables_in_query(sql_statement, source_tables, dialect)
+        if referenced_tables:
+            query_log.append({"sql": sql_statement, "tables": referenced_tables, "description": ""})
+    return query_log

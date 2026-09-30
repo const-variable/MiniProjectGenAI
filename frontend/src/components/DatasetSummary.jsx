@@ -3,19 +3,19 @@ import { getPreview } from "../api";
 import ResultTable from "./ResultTable";
 
 export default function DatasetSummary({ sessionId, summary, tables, queryLogs, source, relationships = [] }) {
-  const [preview, setPreview] = useState(null);
+  const [tablePreviews, setTablePreviews] = useState(null);
   const [showPreview, setShowPreview] = useState(false);
 
-  async function togglePreview() {
-    if (!preview) {
+  async function toggleTablePreview() {
+    if (!tablePreviews) {
       try {
-        const r = await getPreview(sessionId);
-        setPreview(r.tables);
+        const previewPayload = await getPreview(sessionId);
+        setTablePreviews(previewPayload.tables);
       } catch {
-        setPreview([]);
+        setTablePreviews([]);
       }
     }
-    setShowPreview((v) => !v);
+    setShowPreview((previewVisible) => !previewVisible);
   }
 
   return (
@@ -38,37 +38,37 @@ export default function DatasetSummary({ sessionId, summary, tables, queryLogs, 
         </section>
       )}
 
-      {tables.map((t) => (
-        <details key={t.name} className="table-info">
+      {tables.map((table) => (
+        <details key={table.name} className="table-info">
           <summary>
-            <strong>{t.name}</strong> <span className="muted">{t.rows.toLocaleString()} rows</span>
+            <strong>{table.name}</strong> <span className="muted">{table.rows.toLocaleString()} rows</span>
           </summary>
-          <p className="table-summary">{t.summary}</p>
-          {t.example_questions?.length > 0 && (
+          <p className="table-summary">{table.summary}</p>
+          {table.example_questions?.length > 0 && (
             <details className="question-examples">
               <summary>Example questions</summary>
-              <ul>{t.example_questions.map((question) => <li key={question}>{question}</li>)}</ul>
+              <ul>{table.example_questions.map((question) => <li key={question}>{question}</li>)}</ul>
             </details>
           )}
           <ul className="columns">
-            {t.columns.map((c) => (
-              <li key={c.name}>
-                <span>{c.name}</span>
-                <span className={`tag ${c.type}`}>{c.type}</span>
+            {table.columns.map((column) => (
+              <li key={column.name}>
+                <span>{column.name}</span>
+                <span className={`tag ${column.type}`}>{column.type}</span>
               </li>
             ))}
           </ul>
         </details>
       ))}
 
-      <button className="ghost" onClick={togglePreview}>
+      <button className="ghost" onClick={toggleTablePreview}>
         {showPreview ? "Hide data preview" : "Show data preview"}
       </button>
       {showPreview &&
-        (preview || []).map((t) => (
-          <div key={t.name}>
-            <h3 className="preview-title">{t.name}</h3>
-            <ResultTable columns={t.columns} rows={t.rows} />
+        (tablePreviews || []).map((tablePreview) => (
+          <div key={tablePreview.name}>
+            <h3 className="preview-title">{tablePreview.name}</h3>
+            <ResultTable columns={tablePreview.columns} rows={tablePreview.rows} />
           </div>
         ))}
     </aside>

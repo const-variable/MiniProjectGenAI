@@ -14,7 +14,7 @@ backend/
 ├── core/                          shared building blocks
 │   ├── llm.py                     [LLM]              blue boxes
 │   ├── embedding_model.py         [Embedding Model]  yellow boxes (same model offline + online)
-│   └── loader.py                  reads and profiles uploaded delimited files
+│   └── loader.py                  reads, cleans and classifies uploaded table files
 │
 ├── sources/                       shared SQLAlchemy-backed data sources
 │   ├── base.py                    DataSource interface and query helpers
@@ -31,7 +31,7 @@ backend/
 ├── offline/                       OFFLINE VECTOR INDEX CREATION
 │   ├── build_index.py             ▶ the offline pipeline, steps 1-5
 │   ├── table_metadata_store.py    [Table Metadata Store]   red cylinder
-│   ├── sql_query_logs.py          [SQL Query Logs]
+│   ├── sql_query_logs.py          [SQL Query Logs] (sqlglot parsing, regex fallback)
 │   ├── summarizer.py              [Summarization Prompt → LLM → Table/SQL Summary]
 │   └── vector_store.py            [Vector Store]: Embeddings Index + Similarity Search
 │
@@ -51,6 +51,7 @@ sample_data/                       sample CSVs + school.xlsx + Chinook SQLite + 
 docs/reference_architecture.png    the architecture this code implements
 docs/online_graph.md               generated LangGraph execution diagram
 backend/tests/                     offline API, source, SQL guard, and graph tests
+docker-compose.yml, docker/init/   optional PostgreSQL Chinook database with a read-only user
 .github/workflows/ci.yml           backend tests and frontend production build
 ```
 
@@ -66,13 +67,13 @@ backend/tests/                     offline API, source, SQL guard, and graph tes
 | 4 | Embedding Model | `core/embedding_model.py` |
 | 5 | Vector Store → Embeddings Index | `offline/vector_store.py` |
 
-Table summaries include suggested business questions in their embedded text. If a model/provider cannot return structured output, plain-text fallback prompts retain the original flow.
+Table summaries include suggested business questions in their embedded text. Structured outputs use Pydantic models with `PydanticOutputParser`; when the model returns malformed output (`OutputParserException`), a plain-text fallback prompt is used instead. Provider errors such as rate limits or an invalid key are not masked: index building stops and the API returns a 502 with a clear message.
 
 ## Online: runs per question (`online/pipeline.py`)
 
 | Step | Diagram box | File |
 |---|---|---|
-| Follow-up | `condense` rewrites questions using up to three prior turns | `prompts/answer_prompt.py` |
+| Follow-up | `condense` rewrites questions using up to three prior turns | `online/pipeline.py`, `prompts/answer_prompt.py` |
 | 1-2 | `retrieve`: question embedding → Similarity Search → Top N Tables | `online/similarity_search.py` |
 | 3 | `select_tables`: Table Selection Prompt → LLM → Top K Tables | `online/table_selection.py` |
 | 4 | `generate_sql`: Text2SQL Prompt → LLM → Generated SQL | `online/text2sql.py` |
@@ -147,6 +148,7 @@ Press `Ctrl+C` in the frontend and backend terminals. Stop the optional database
 - The browser cannot reach the API: confirm Uvicorn is running and `VITE_API_URL` matches its address and port.
 - A port is occupied: from `backend/`, start Uvicorn with `uvicorn main:app --reload --port 8001`, then start Vite with `VITE_API_URL=http://localhost:8001 npm run dev` from `frontend/`.
 - Database indexing is slow: restrict the selected database tables; upload, profile, and result limits are listed in the configuration table below.
+- `The LLM provider returned an error` (HTTP 502): check `GROQ_API_KEY`, that `LLM_MODEL` is available on Groq, and your rate limit or quota. Server logs record only the failing step and error type, never keys or connection URLs.
 
 ### Configuration (`backend/.env`)
 
@@ -170,6 +172,18 @@ Press `Ctrl+C` in the frontend and backend terminals. Stop the optional database
 The frontend reads `VITE_API_URL` (default `http://localhost:8000`).
 
 `LLM_CACHE=sqlite` can reduce repeated model calls during demos and evaluation; the local cache file is ignored by git.
+
+### Tunable values in code
+
+Values that affect retrieval or generation quality are marked with a `# hyperparameter` comment where they are defined.
+
+| Value | Default | Where |
+|---|---|---|
+| LLM `temperature` | `0` | `core/llm.py` |
+| Concurrent table-summary calls | `5` | `offline/summarizer.py` |
+| Similarity-search hits | `max(10, 3 × TOP_N)`, so every table can be scored | `online/similarity_search.py` |
+| Similar past queries passed to the Text2SQL prompt | `3` | `online/similarity_search.py` |
+| Hybrid retriever weights (FAISS, BM25) | `0.5, 0.5` | `offline/vector_store.py` |
 
 ## Demo with uploaded files
 
@@ -207,7 +221,7 @@ Follow-up questions use the previous three question/SQL/answer turns to interpre
 
 ## Query log format
 
-`.sql` or `.txt` file of SELECT queries separated by `;`. `--` comments are ignored. Table names must match the uploaded file names (lowercase, no extension, spaces as `_`). Up to 40 queries are indexed. Without logs, summaries are built from table metadata alone.
+`.sql` or `.txt` file of SELECT queries separated by `;`. `--` and `/* */` comments are ignored. For uploads, table names must match the cleaned file names (lowercase, no extension, spaces as `_`); for databases, they must match the real table names (matched case-insensitively, schema prefixes allowed). Queries that reference no known table are skipped. Up to 40 queries are indexed. Without logs, summaries are built from table metadata alone.
 
 ## API
 

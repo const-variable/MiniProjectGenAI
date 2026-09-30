@@ -6,31 +6,36 @@ Hits on SQL summaries are also returned as similar past queries.
 """
 import os
 
-N_CANDIDATES = int(os.getenv("TOP_N", "5"))
-MAX_EXAMPLES = 3
+MAX_EXAMPLES = 3  # hyperparameter
 
 
-def top_n_tables(vector_store, query_log: list, question: str, n: int | None = None):
-    n = int(os.getenv("TOP_N", str(N_CANDIDATES))) if n is None else n
-    k = max(10, n * 3)
+def top_n_tables(vector_store, query_log: list, question: str,
+                 candidate_limit: int | None = None):
+    if candidate_limit is None:
+        candidate_limit = int(os.getenv("TOP_N", "5"))  # hyperparameter
+    # Over-fetch so every table can be scored even when SQL-log hits crowd the results.
+    search_limit = max(10, candidate_limit * 3)  # hyperparameter
     if vector_store.retriever_kind == "hybrid":
-        hits = vector_store.as_retriever(k).invoke(question)
+        hits = vector_store.as_retriever(search_limit).invoke(question)
         scored_hits = [(document, 1 / (rank + 1)) for rank, document in enumerate(hits)]
         score_kind = "rank"
     else:
-        scored_hits = vector_store.similarity_search(question, k=k)
+        scored_hits = vector_store.similarity_search(question, k=search_limit)
         score_kind = "distance"
 
-    best, similar_queries = {}, []
-    for doc, score in scored_hits:
+    best_table_scores, similar_queries = {}, []
+    for document, score in scored_hits:
         score = float(score)
-        for t in doc.metadata["tables"]:
-            better = t not in best or (score > best[t] if score_kind == "rank" else score < best[t])
-            if better:
-                best[t] = score
-        if doc.metadata["kind"] == "sql" and len(similar_queries) < MAX_EXAMPLES:
-            similar_queries.append(query_log[doc.metadata["log"]])
+        for table_name in document.metadata["tables"]:
+            is_better_score = (table_name not in best_table_scores
+                               or (score > best_table_scores[table_name]
+                                   if score_kind == "rank" else score < best_table_scores[table_name]))
+            if is_better_score:
+                best_table_scores[table_name] = score
+        if document.metadata["kind"] == "sql" and len(similar_queries) < MAX_EXAMPLES:
+            similar_queries.append(query_log[document.metadata["log"]])
 
-    ranked = sorted(best.items(), key=lambda item: item[1], reverse=score_kind == "rank")[:n]
+    ranked = sorted(best_table_scores.items(), key=lambda item: item[1],
+                    reverse=score_kind == "rank")[:candidate_limit]
     return ([{"name": table, "score": round(score, 4)} for table, score in ranked],
             similar_queries, score_kind)
