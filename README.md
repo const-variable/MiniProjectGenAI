@@ -15,7 +15,7 @@ backend/
 │   ├── llm.py                     [LLM]              blue boxes
 │   ├── embedding_model.py         [Embedding Model]  yellow boxes (same model offline + online)
 │   ├── data_store.py              [Tables]           the rows, in in-memory SQLite
-│   └── loader.py                  reads .csv/.txt, cleans, classifies columns
+│   └── loader.py                  reads .csv/.txt/.tsv, detects separator, cleans, classifies columns
 │
 ├── prompts/                       green boxes
 │   ├── summarization_prompt.py    [Summarization Prompt]
@@ -40,9 +40,10 @@ backend/
     ├── sql_executor.py            safety check, grounding check, execute, retry
     └── answer_generator.py        result → plain-English answer
 
-frontend/                          React UI (upload, chat, "How this was answered")
-sample_data/                       4 tables + query_logs.sql
+frontend/                          React + Vite UI (upload, dataset summary, chat, "How this was answered")
+sample_data/                       4 tables + marks_pipe.txt (pipe-separated) + query_logs.sql
 docs/reference_architecture.png    the architecture this code implements
+main.py                            copy of backend/main.py (run the one in backend/)
 ```
 
 **To follow the flow, read two files:** `offline/build_index.py` (top half of the diagram) and `online/pipeline.py` (bottom half). Each step is numbered and calls the module for that box.
@@ -93,6 +94,18 @@ npm run dev
 ```
 Open http://localhost:5173.
 
+### Configuration (`backend/.env`)
+
+| Variable | Purpose |
+|---|---|
+| `LLM_PROVIDER`, `LLM_MODEL` | **Required.** Chat model, e.g. `openai` + `openai/gpt-4o-mini` via OpenRouter, or `groq` + `llama-3.3-70b-versatile` (also `pip install langchain-groq`) |
+| `OPENAI_API_KEY`, `OPENAI_API_BASE`, `OPENAI_BASE_URL` / `GROQ_API_KEY` | Provider credentials (see `.env.example`) |
+| `EMBED_MODEL` | Embedding model, default `sentence-transformers/all-MiniLM-L6-v2` |
+| `FRONTEND_ORIGINS` | Allowed CORS origins, default `http://localhost:5173` |
+| `MAX_UPLOAD_MB` | Max size per table file, default `20` |
+
+The frontend reads `VITE_API_URL` (default `http://localhost:8000`).
+
 ## Demo with the sample data
 
 1. **Tables:** upload `orders.csv`, `products.csv`, `students.csv`, `scores.csv` together.
@@ -100,9 +113,27 @@ Open http://localhost:5173.
 3. Ask *"Why did revenue decrease in the last quarter, and which product category contributed the most?"*
    Open **How this was answered**: Top N should list all four tables, Top K should keep only `orders` and `products`, and the answer should be Electronics.
 
+## Table file format
+
+`.csv`, `.txt` or `.tsv`. The separator (comma, tab, `|` or `;`) is detected automatically, e.g. `sample_data/marks_pipe.txt`. Column names are cleaned (`Order Date (UTC)` → `order_date_utc`), numbers and dates stored as text are converted, and each column is classified as date / id / number / category / text.
+
+**Column descriptions (optional):** on the upload screen, explain unclear columns one per line as `column: meaning` or `table.column: meaning` (e.g. `marks: exam score out of 100`). They are added to the Table Metadata Store and reach both the summaries and the Text2SQL prompt.
+
 ## Query log format
 
 `.sql` or `.txt` file of SELECT queries separated by `;`. `--` comments are ignored. Table names must match the uploaded file names (lowercase, no extension, spaces as `_`). Up to 40 queries are indexed. Without logs, summaries are built from table metadata alone.
+
+## API
+
+| Method | Path | What it does |
+|---|---|---|
+| POST | `/upload` | form fields `files` (tables), `query_logs` (optional), `descriptions` → runs OFFLINE, returns `session_id`, dataset summary, tables |
+| POST | `/ask` | `{session_id, question}` → runs ONLINE, returns answer, SQL, Top N / Top K tables, similar past queries, result rows |
+| GET | `/session/{id}` | dataset summary and tables for a session |
+| DELETE | `/session/{id}` | drop a session |
+| GET | `/suggestions/{id}` | up to 4 suggested questions |
+| GET | `/preview/{id}` | first 20 rows of each table |
+| GET | `/health` | health check |
 
 ## Limitations
 
