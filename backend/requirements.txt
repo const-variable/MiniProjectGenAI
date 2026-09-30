@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+python-multipart
+python-dotenv
+pandas
+langchain
+langchain-core
+langchain-community
+langchain-huggingface
+sentence-transformers
+faiss-cpu
+timm>=1.0
+# LLM provider: langchain-openai covers OpenRouter and OpenAI
+langchain-openai
+# langchain-groq
