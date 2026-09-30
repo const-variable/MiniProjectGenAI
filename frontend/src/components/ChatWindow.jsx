@@ -2,18 +2,18 @@ import { useEffect, useRef, useState } from "react";
 import MessageBubble from "./MessageBubble";
 
 export default function ChatWindow({ messages, loading, suggestions, onAsk }) {
-  const [text, setText] = useState("");
+  const [questionText, setQuestionText] = useState("");
   const bottomRef = useRef(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  function submit(e) {
-    e.preventDefault();
-    if (!text.trim() || loading) return;
-    onAsk(text);
-    setText("");
+  function submitQuestion(event) {
+    event.preventDefault();
+    if (!questionText.trim() || loading) return;
+    onAsk(questionText);
+    setQuestionText("");
   }
 
   return (
@@ -24,9 +24,9 @@ export default function ChatWindow({ messages, loading, suggestions, onAsk }) {
             <p>Ask anything about your data.</p>
             {suggestions.length > 0 && (
               <div className="chips">
-                {suggestions.map((s) => (
-                  <button key={s} className="chip" disabled={loading} onClick={() => onAsk(s)}>
-                    {s}
+                {suggestions.map((suggestedQuestion) => (
+                  <button key={suggestedQuestion} className="chip" disabled={loading} onClick={() => onAsk(suggestedQuestion)}>
+                    {suggestedQuestion}
                   </button>
                 ))}
               </div>
@@ -34,21 +34,21 @@ export default function ChatWindow({ messages, loading, suggestions, onAsk }) {
           </div>
         )}
 
-        {messages.map((m, i) => (
-          <MessageBubble key={i} message={m} />
+        {messages.map((message, messageIndex) => (
+          <MessageBubble key={messageIndex} message={message} />
         ))}
         {loading && <div className="bubble assistant thinking">Thinking…</div>}
         <div ref={bottomRef} />
       </div>
 
-      <form className="composer" onSubmit={submit}>
+      <form className="composer" onSubmit={submitQuestion}>
         <input
-          value={text}
-          onChange={(e) => setText(e.target.value)}
+          value={questionText}
+          onChange={(event) => setQuestionText(event.target.value)}
           placeholder="e.g. Which subject has the lowest average marks?"
           disabled={loading}
         />
-        <button className="primary" type="submit" disabled={loading || !text.trim()}>
+        <button className="primary" type="submit" disabled={loading || !questionText.trim()}>
           Ask
         </button>
       </form>

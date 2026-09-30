@@ -1,67 +1,94 @@
 import { useState } from "react";
-import { askQuestion, deleteSession, getSuggestions, uploadFiles } from "./api";
+import { askQuestion, connectDatabase, deleteSession, getBuildProgress, getSuggestions, uploadFiles } from "./api";
 import UploadPanel from "./components/UploadPanel";
 import DatasetSummary from "./components/DatasetSummary";
 import ChatWindow from "./components/ChatWindow";
 
 export default function App() {
-  const [session, setSession] = useState(null); // { session_id, summary, tables }
+  const [session, setSession] = useState(null);
   const [messages, setMessages] = useState([]);
   const [suggestions, setSuggestions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [buildProgress, setBuildProgress] = useState(null);
 
-  async function handleUpload(files, logFiles, descriptions) {
+  async function buildDataset(sourceMode, sourceDetails, logFiles, descriptions, datasetDescription) {
     setError("");
     setLoading(true);
+    const progressId = crypto.randomUUID();
+    const buildStartedAt = Date.now();
+    setBuildProgress({ stage: null, done: 0, total: 0, buildStartedAt, stageStartedAt: buildStartedAt });
+    // The build request only returns when finished, so poll its progress alongside it.
+    const progressTimer = setInterval(() => {
+      getBuildProgress(progressId)
+        .then((latestProgress) => setBuildProgress((previousProgress) => previousProgress && {
+          ...latestProgress,
+          buildStartedAt,
+          stageStartedAt: previousProgress.stage === latestProgress.stage
+            ? previousProgress.stageStartedAt : Date.now(),
+        }))
+        .catch(() => {});
+    }, 1000);
     try {
-      const data = await uploadFiles(files, logFiles, descriptions);
-      setSession(data);
+      const sessionPayload = sourceMode === "upload"
+        ? await uploadFiles(sourceDetails.files, logFiles, descriptions, datasetDescription, progressId)
+        : await connectDatabase(sourceDetails.url, sourceDetails.schema, sourceDetails.tables,
+          logFiles, descriptions, datasetDescription, progressId);
+      setSession(sessionPayload);
       setMessages([]);
-      getSuggestions(data.session_id)
-        .then((r) => setSuggestions(r.questions || []))
+      getSuggestions(sessionPayload.session_id)
+        .then((suggestionPayload) => setSuggestions(suggestionPayload.questions || []))
         .catch(() => setSuggestions([]));
-    } catch (e) {
-      setError(e.message);
+    } catch (requestError) {
+      setError(requestError.message);
     } finally {
+      clearInterval(progressTimer);
+      setBuildProgress(null);
       setLoading(false);
     }
   }
 
-  async function handleAsk(question) {
-    const q = question.trim();
-    if (!q || loading || !session) return;
-    setMessages((m) => [...m, { role: "user", text: q }]);
+  async function askDatasetQuestion(question) {
+    const askedQuestion = question.trim();
+    if (!askedQuestion || loading || !session) return;
+    setMessages((previousMessages) => [...previousMessages, { role: "user", text: askedQuestion }]);
     setLoading(true);
     setError("");
     try {
-      const r = await askQuestion(session.session_id, q);
-      setMessages((m) => [
-        ...m,
+      const answerPayload = await askQuestion(session.session_id, askedQuestion);
+      setMessages((previousMessages) => [
+        ...previousMessages,
         {
           role: "assistant",
-          text: r.answer,
-          sql: r.sql,
-          topN: r.top_n_tables,
-          selected: r.selected_tables,
-          similar: r.similar_queries,
-          result: r.result,
-          error: r.error,
+          text: answerPayload.answer,
+          sql: answerPayload.sql,
+          candidateTables: answerPayload.top_n_tables,
+          selectedTables: answerPayload.selected_tables,
+          similarQueries: answerPayload.similar_queries,
+          queryResult: answerPayload.result,
+          error: answerPayload.error,
+          selectionReason: answerPayload.selection_reason,
+          sqlExplanation: answerPayload.sql_explanation,
+          scoreKind: answerPayload.score_kind,
+          question: askedQuestion,
+          standaloneQuestion: answerPayload.standalone_question,
         },
       ]);
-    } catch (e) {
-      if (e.status === 404) {
+    } catch (requestError) {
+      if (requestError.status === 404) {
         setSession(null);
-        setError("Your session expired. Please upload the file again.");
+        setError("Your session expired. Please build the dataset again.");
       } else {
-        setMessages((m) => [...m, { role: "assistant", text: `Something went wrong: ${e.message}`, isError: true }]);
+        setMessages((previousMessages) => [...previousMessages, {
+          role: "assistant", text: `Something went wrong: ${requestError.message}`, isError: true,
+        }]);
       }
     } finally {
       setLoading(false);
     }
   }
 
-  function reset() {
+  function startNewDataset() {
     if (session) deleteSession(session.session_id).catch(() => {});
     setSession(null);
     setMessages([]);
@@ -77,7 +104,7 @@ export default function App() {
           <p className="muted">Upload a table. Ask questions in plain English.</p>
         </div>
         {session && (
-          <button className="ghost" onClick={reset}>
+          <button className="ghost" onClick={startNewDataset}>
             New dataset
           </button>
         )}
@@ -86,7 +113,7 @@ export default function App() {
       {error && <div className="alert">{error}</div>}
 
       {!session ? (
-        <UploadPanel onUpload={handleUpload} loading={loading} />
+        <UploadPanel onBuildDataset={buildDataset} loading={loading} buildProgress={buildProgress} />
       ) : (
         <main className="workspace">
           <DatasetSummary
@@ -94,8 +121,10 @@ export default function App() {
             summary={session.summary}
             tables={session.tables}
             queryLogs={session.query_logs}
+            source={session.source}
+            relationships={session.relationships || []}
           />
-          <ChatWindow messages={messages} loading={loading} suggestions={suggestions} onAsk={handleAsk} />
+          <ChatWindow messages={messages} loading={loading} suggestions={suggestions} onAsk={askDatasetQuestion} />
         </main>
       )}
     </div>

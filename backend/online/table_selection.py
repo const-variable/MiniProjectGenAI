@@ -1,42 +1,57 @@
 """[Top N Tables] + [Question] -> [Table Selection Prompt] -> [LLM] -> [Top K Tables] (online)."""
 import json
+import os
 import re
 
-from core.llm import make_chain
-from prompts.table_selection_prompt import TABLE_SELECTION_PROMPT
+from langchain_core.exceptions import OutputParserException
+from langchain_core.output_parsers import PydanticOutputParser
 
-K_SELECTED = 3
+from core.llm import make_chain
+from prompts.schemas import TableChoice
+from prompts.table_selection_prompt import TABLE_SELECTION_FALLBACK_PROMPT, TABLE_SELECTION_PROMPT
 
 
 class TableSelector:
     def __init__(self, llm):
-        self.chain = make_chain(TABLE_SELECTION_PROMPT, llm)
+        self.parser = PydanticOutputParser(pydantic_object=TableChoice)
+        self.fallback_chain = make_chain(TABLE_SELECTION_FALLBACK_PROMPT, llm)
+        self.chain = (TABLE_SELECTION_PROMPT.partial(
+            format_instructions=self.parser.get_format_instructions()) | llm | self.parser)
 
-    def select(self, question: str, top_n: list, table_summaries: dict, metadata_store,
-               k: int = K_SELECTED) -> list:
-        names = [c["name"] for c in top_n]
-        if len(names) <= 1:                       # nothing to choose between
-            return names
+    def select(self, question: str, candidate_tables: list, table_summaries: dict, metadata_store,
+               k: int | None = None) -> tuple[list, str]:
+        if k is None:
+            k = int(os.getenv("TOP_K", "3"))  # hyperparameter
+        candidate_names = [candidate["name"] for candidate in candidate_tables]
+        if len(candidate_names) <= 1:
+            selection_reason = ("Only one candidate table was available." if candidate_names
+                                else "No candidate tables were available.")
+            return candidate_names, selection_reason
 
-        candidates = "\n".join(f"- {n}: {table_summaries[n]}" for n in names)
-        joins = metadata_store.joins_among(names)
+        candidates = "\n".join(
+            f"- {table_name}: {table_summaries[table_name]}" for table_name in candidate_names)
+        joins = metadata_store.joins_among(candidate_names)
         if joins:
             candidates += "\nJoin keys: " + "; ".join(joins)
 
         try:
-            text = self.chain.invoke({"question": question, "candidates": candidates, "k": k})
-            picked = []
-            m = re.search(r"\[.*?\]", text, re.S)
-            if m:
+            table_choice = self.chain.invoke({"question": question, "candidates": candidates, "k": k})
+            selected_tables = [name for name in table_choice.tables if name in candidate_names][:k]
+            if selected_tables:
+                return selected_tables, table_choice.reason
+        except OutputParserException:
+            fallback_text = self.fallback_chain.invoke({
+                "question": question,
+                "candidates": candidates,
+                "k": k,
+            })
+            json_list = re.search(r"\[.*?\]", fallback_text, re.S)
+            if json_list:
                 try:
-                    picked = [str(p) for p in json.loads(m.group(0))]
+                    selected_tables = [name for name in json.loads(json_list.group(0))
+                                       if name in candidate_names][:k]
                 except json.JSONDecodeError:
-                    pass
-            if not picked:     # model ignored the JSON format: take table names it mentioned
-                picked = [n for n in names if re.search(rf"\b{re.escape(n)}\b", text)]
-            picked = [p for p in picked if p in names][:k]
-            if picked:
-                return picked
-        except Exception:
-            pass
-        return names[:k]      # fallback: best-ranked tables from similarity search
+                    selected_tables = []
+                if selected_tables:
+                    return selected_tables, "Selected from the candidate summaries."
+        return candidate_names[:k], "Selected the highest-ranked candidate tables."

@@ -36,6 +36,24 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .dropzone:hover, .dropzone.dragging { border-color: var(--accent); background: var(--accent-soft); }
 .filelist { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
 .filelist li { display: flex; justify-content: space-between; padding: 8px 12px; background: var(--bg); border-radius: 8px; }
+.source-tabs { display: flex; border-bottom: 1px solid var(--border); gap: 8px; }
+.source-tabs button { border: 0; border-radius: 0; padding: 10px 12px; color: var(--muted); background: transparent; }
+.source-tabs button.active { color: var(--accent); border-bottom: 2px solid var(--accent); font-weight: 600; }
+.connect-fields { display: flex; flex-direction: column; gap: 16px; }
+.secret-field { display: flex; gap: 8px; }
+.secret-field input { flex: 1; min-width: 0; }
+.secret-field button { flex: 0 0 auto; }
+.connect-options { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.connect-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.connection-ok, .connection-error { font-size: 13px; }
+.connection-ok { color: #15803d; }
+.connection-error { color: var(--danger); }
+.source-badge { width: fit-content; max-width: 100%; overflow-wrap: anywhere; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); font-size: 12px; }
+.relationships h3 { font-size: 14px; margin-bottom: 6px; }
+.relationships ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; font-size: 12px; overflow-wrap: anywhere; }
+.question-examples { margin: 6px 0 8px; font-size: 12px; }
+.question-examples summary { cursor: pointer; color: var(--muted); }
+.question-examples ul { margin: 6px 0 0; padding-left: 18px; }
 .field { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
 textarea, input { font: inherit; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; width: 100%; }
 
@@ -81,6 +99,7 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 @media (max-width: 800px) {
   .workspace { grid-template-columns: 1fr; }
+  .connect-options { grid-template-columns: 1fr; }
   .summary { position: static; max-height: none; }
   .chat { height: 70vh; }
   .bubble { max-width: 100%; }
@@ -95,3 +114,13 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .hint { font-size: 11.5px; color: var(--muted); margin-top: 4px; }
 .example { margin-bottom: 8px; display: flex; flex-direction: column; gap: 4px; }
 .sql.small { font-size: 12px; padding: 8px 10px; }
+
+.build-progress { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--accent-soft); }
+.build-progress-header { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; }
+.progress-track { position: relative; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.progress-fill { height: 100%; border-radius: 3px; background: var(--accent); transition: width 0.4s ease; }
+.progress-track.indeterminate .progress-fill { position: absolute; width: 35%; animation: progress-slide 1.2s ease-in-out infinite; }
+@keyframes progress-slide { from { left: -35%; } to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) {
+  .progress-track.indeterminate .progress-fill { animation: none; left: 0; width: 100%; opacity: 0.4; }
+}

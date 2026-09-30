@@ -1,133 +1,144 @@
 """Reading, cleaning and classifying uploaded table files (.csv / .txt / .tsv)."""
+import csv
 import io
 import re
 import warnings
 
 import pandas as pd
 
-ALLOWED_EXTENSIONS = (".csv", ".txt", ".tsv")
+ALLOWED_EXTENSIONS = (".csv", ".txt", ".tsv", ".xlsx")
 
 
-def clean_name(s) -> str:
-    """'Order Date (UTC)' -> 'order_date_utc'. Simple names make the LLM's SQL more reliable."""
-    s = re.sub(r"[^0-9a-zA-Z]+", "_", str(s)).strip("_").lower()
-    if not s or s[0].isdigit():
-        s = "c_" + s
-    return s
+def clean_name(source_name) -> str:
+    normalized_name = re.sub(r"[^0-9a-zA-Z]+", "_", str(source_name)).strip("_").lower()
+    if not normalized_name or normalized_name[0].isdigit():
+        normalized_name = "c_" + normalized_name
+    return normalized_name
 
 
-def _decode(raw: bytes) -> str:
+def decode_text(file_bytes: bytes) -> str:
     try:
-        return raw.decode("utf-8-sig")
+        return file_bytes.decode("utf-8-sig")
     except UnicodeDecodeError:
-        return raw.decode("latin-1")
+        return file_bytes.decode("latin-1")
 
 
 SEPARATORS = [",", "\t", "|", ";"]
 
 
-def detect_separator(text: str):
-    """Pick the separator that appears the same number of times on every one of
-    the first lines (the most times, if several do). None if nothing is consistent."""
-    lines = [ln for ln in text.splitlines()[:20] if ln.strip()]
-    best, best_count = None, 0
-    for sep in SEPARATORS:
-        counts = {ln.count(sep) for ln in lines}
+def detect_separator(file_text: str):
+    """Detect a consistent delimiter in the file header."""
+    sample_lines = [line for line in file_text.splitlines()[:20] if line.strip()]
+    best_separator, best_count = None, 0
+    for separator in SEPARATORS:
+        counts = {line.count(separator) for line in sample_lines}
         if len(counts) == 1:
-            n = counts.pop()
-            if n > best_count:
-                best, best_count = sep, n
-    return best
+            separator_count = counts.pop()
+            if separator_count > best_count:
+                best_separator, best_count = separator, separator_count
+    return best_separator
 
 
-def read_table(raw: bytes) -> pd.DataFrame:
+def read_table(file_bytes: bytes) -> pd.DataFrame:
     """Read a delimited text file, detecting the separator (comma, tab, | or ;)."""
-    text = _decode(raw)
-    sep = detect_separator(text)
-    if sep:
-        return pd.read_csv(io.StringIO(text), sep=sep, skipinitialspace=True)
+    file_text = decode_text(file_bytes)
+    separator = detect_separator(file_text)
+    if separator:
+        return pd.read_csv(io.StringIO(file_text), sep=separator, skipinitialspace=True)
 
     # Inconsistent counts (e.g. commas inside quoted values): let pandas sniff,
     # then fall back to trying each separator and keeping the widest result.
     try:
-        df = pd.read_csv(io.StringIO(text), sep=None, engine="python", skipinitialspace=True)
-    except Exception:  # noqa: BLE001
-        df = pd.read_csv(io.StringIO(text), skipinitialspace=True)
-    if df.shape[1] < 2:
-        for s in SEPARATORS:
+        table_frame = pd.read_csv(io.StringIO(file_text), sep=None, engine="python", skipinitialspace=True)
+    except (ValueError, csv.Error):
+        table_frame = pd.read_csv(io.StringIO(file_text), skipinitialspace=True)
+    if table_frame.shape[1] < 2:
+        for separator in SEPARATORS:
             try:
-                alt = pd.read_csv(io.StringIO(text), sep=s, skipinitialspace=True)
-            except Exception:  # noqa: BLE001
+                alternative_frame = pd.read_csv(
+                    io.StringIO(file_text), sep=separator, skipinitialspace=True)
+            except (ValueError, csv.Error):
                 continue
-            if alt.shape[1] > df.shape[1]:
-                df = alt
-    return df
+            if alternative_frame.shape[1] > table_frame.shape[1]:
+                table_frame = alternative_frame
+    return table_frame
 
 
-def clean_table(df: pd.DataFrame) -> pd.DataFrame:
-    """Clean column names, trim text, and convert number-like / date-like text columns."""
-    df = df.copy()
-
-    # unique, clean column names
-    names, seen = [], {}
-    for c in df.columns:
-        n = clean_name(c)
-        if n in seen:
-            seen[n] += 1
-            n = f"{n}_{seen[n]}"
+def clean_column_names(table_frame: pd.DataFrame) -> pd.DataFrame:
+    table_frame = table_frame.copy()
+    names, seen_names = [], {}
+    for column_name in table_frame.columns:
+        cleaned_name = clean_name(column_name)
+        if cleaned_name in seen_names:
+            seen_names[cleaned_name] += 1
+            cleaned_name = f"{cleaned_name}_{seen_names[cleaned_name]}"
         else:
-            seen[n] = 0
-        names.append(n)
-    df.columns = names
-    df = df.dropna(how="all")
+            seen_names[cleaned_name] = 0
+        names.append(cleaned_name)
+    table_frame.columns = names
+    return table_frame
 
-    for c in df.columns:
-        s = df[c]
-        if pd.api.types.is_numeric_dtype(s) or pd.api.types.is_datetime64_any_dtype(s):
+
+def convert_types(table_frame: pd.DataFrame) -> pd.DataFrame:
+    """Convert numeric/date-like text while preserving column names."""
+    table_frame = table_frame.copy().dropna(how="all")
+
+    for column_name in table_frame.columns:
+        column_values = table_frame[column_name]
+        if (pd.api.types.is_numeric_dtype(column_values)
+                or pd.api.types.is_datetime64_any_dtype(column_values)):
             continue
-        s = s.map(lambda v: v.strip() if isinstance(v, str) else v)
-        s = s.replace("", None)
-        filled = s.notna().sum()
-        if not filled:
-            df[c] = s
+        column_values = column_values.map(
+            lambda cell_value: cell_value.strip() if isinstance(cell_value, str) else cell_value)
+        column_values = column_values.replace("", None)
+        populated_count = column_values.notna().sum()
+        if not populated_count:
+            table_frame[column_name] = column_values
             continue
 
-        # numbers stored as text (e.g. "78 " with a trailing space)
-        num = pd.to_numeric(s, errors="coerce")
-        if num.notna().sum() == filled:
-            df[c] = num
+        # Numeric values may arrive as text.
+        numeric_values = pd.to_numeric(column_values, errors="coerce")
+        if numeric_values.notna().sum() == populated_count:
+            table_frame[column_name] = numeric_values
             continue
 
-        # dates stored as text
+        # Date values may arrive as text.
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            dt = pd.to_datetime(s, errors="coerce")
-        df[c] = dt if dt.notna().sum() / filled > 0.9 else s
-    return df
+            parsed_dates = pd.to_datetime(column_values, errors="coerce")
+        table_frame[column_name] = (
+            parsed_dates if parsed_dates.notna().sum() / populated_count > 0.9 else column_values)
+    return table_frame
 
 
-def classify_column(s: pd.Series, name: str) -> str:
+def clean_table(table_frame: pd.DataFrame) -> pd.DataFrame:
+    return convert_types(clean_column_names(table_frame))
+
+
+def classify_column(column_values: pd.Series, column_name: str) -> str:
     """Label a column as date / id / number / category / text, from its values only."""
-    nonnull = s.dropna()
-    n = len(nonnull) or 1
-    uniq = nonnull.nunique()
+    nonnull_values = column_values.dropna()
+    value_count = len(nonnull_values) or 1
+    unique_count = nonnull_values.nunique()
 
-    if pd.api.types.is_datetime64_any_dtype(s):
+    if pd.api.types.is_datetime64_any_dtype(column_values):
         return "date"
-    if re.search(r"(^|_)id$", name):
+    if re.search(r"(^|_)id$", column_name):
         return "id"
-    if pd.api.types.is_bool_dtype(s):
+    if pd.api.types.is_bool_dtype(column_values):
         return "category"
-    if pd.api.types.is_numeric_dtype(s):
+    if pd.api.types.is_numeric_dtype(column_values):
         # small whole-number codes (grade 6/7/8, rating 1-5) behave like categories
-        small_codes = (uniq <= 12 and len(nonnull)
-                       and (nonnull % 1 == 0).all() and nonnull.max() - nonnull.min() <= 20)
-        return "category" if small_codes else "number"
-    if uniq <= 30 or uniq / n < 0.5:
+        small_category_values = (unique_count <= 12 and len(nonnull_values)
+                                 and (nonnull_values % 1 == 0).all()
+                                 and nonnull_values.max() - nonnull_values.min() <= 20)
+        return "category" if small_category_values else "number"
+    if unique_count <= 30 or unique_count / value_count < 0.5:
         return "category"
-    avg_len = nonnull.astype(str).str.len().mean() if len(nonnull) else 0
-    return "text" if avg_len > 30 else "id"
+    average_text_length = nonnull_values.astype(str).str.len().mean() if len(nonnull_values) else 0
+    return "text" if average_text_length > 30 else "id"
 
 
-def classify_columns(df: pd.DataFrame) -> dict:
-    return {c: classify_column(df[c], c) for c in df.columns}
+def classify_columns(table_frame: pd.DataFrame) -> dict:
+    return {column_name: classify_column(table_frame[column_name], column_name)
+            for column_name in table_frame.columns}

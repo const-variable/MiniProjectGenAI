@@ -20,31 +20,60 @@ class OfflineIndex:
     metadata_store: TableMetadataStore
     query_log: list
     table_summaries: dict
+    table_example_questions: dict
     vector_store: VectorStore
 
 
-def build_offline_index(tables: dict, llm, embedding_model, notes: dict | None = None,
-                        raw_queries: list | None = None) -> OfflineIndex:
-    # Step 1: Table Metadata Store
-    types = {t: classify_columns(df) for t, df in tables.items()}
-    metadata_store = TableMetadataStore(tables, types, notes)
+def build_offline_index(source, llm, embedding_model, notes: dict | None = None,
+                        raw_queries: list | None = None, dataset_description: str = "",
+                        on_progress=lambda stage, done, total: None) -> OfflineIndex:
+    # Step 1: Profile tables before assembling schema metadata.
+    tables = source.list_tables()
+    types = {}
+    for table_index, table in enumerate(tables):
+        on_progress("Profiling tables", table_index, len(tables))
+        types[table] = classify_columns(source.profile_frame(table))
+    on_progress("Profiling tables", len(tables), len(tables))
+    metadata_store = TableMetadataStore(source, types, notes, dataset_description)
 
-    # Step 2: SQL Query Logs
-    query_log = build_query_log(raw_queries or [], tables)
+    # Step 2: Attach each logged query to its referenced source tables.
+    query_log = build_query_log(raw_queries or [], tables, source.dialect)
 
-    # Step 3: Summarization Prompt -> LLM -> Table/SQL Summary
+    # Step 3: Summarize table profiles and useful query patterns.
     summarizer = Summarizer(llm)
-    summarizer.summarise_queries(query_log)
-    table_summaries = {
-        t: summarizer.summarise_table(
-            t, metadata_store.get(t), query_log,
-            fallback=f'Table with {len(df)} rows and columns: {", ".join(df.columns)}.')
-        for t, df in tables.items()
-    }
+    if query_log:
+        on_progress("Summarising past queries", 0, 1)
+        summarizer.summarise_queries(query_log)
+    summary_inputs = []
+    for table in tables:
+        table_queries = [entry["sql"] for entry in query_log if table in entry["tables"]][:10]
+        summary_inputs.append({
+            "metadata": metadata_store.get(table),
+            "queries": "\n\n".join(table_queries) or "(no query logs provided)",
+            "dataset_description": dataset_description.strip() or "(not provided)",
+        })
+    summarised_count = 0
 
-    # Steps 4 + 5: Embedding Model -> Vector Store (Embeddings Index)
-    documents = [table_document(t, table_summaries[t], tables[t].columns) for t in tables]
-    documents += [sql_document(i, entry) for i, entry in enumerate(query_log)]
-    vector_store = VectorStore(documents, embedding_model)
+    def table_summarised():
+        nonlocal summarised_count
+        summarised_count += 1
+        on_progress("Summarising tables", summarised_count, len(tables))
 
-    return OfflineIndex(metadata_store, query_log, table_summaries, vector_store)
+    on_progress("Summarising tables", 0, len(tables))
+    summaries = summarizer.summarise_tables(summary_inputs, table_summarised)
+    table_summaries = {table: summary.summary.strip() for table, summary in zip(tables, summaries)}
+    table_example_questions = {table: summary.example_questions
+                               for table, summary in zip(tables, summaries)}
+
+    # Steps 4 + 5: Embed summaries for question-time retrieval.
+    on_progress("Building the search index", 0, 1)
+    search_documents = [
+        table_document(table, table_summaries[table], source.columns(table),
+                       table_example_questions[table])
+        for table in tables
+    ]
+    search_documents += [sql_document(query_index, query_entry)
+                         for query_index, query_entry in enumerate(query_log)]
+    vector_store = VectorStore(search_documents, embedding_model)
+
+    return OfflineIndex(metadata_store, query_log, table_summaries, table_example_questions, vector_store)

@@ -3,13 +3,17 @@ uvicorn[standard]
 python-multipart
 python-dotenv
 pandas
-langchain
+openpyxl
+sqlalchemy>=2.0
+psycopg2-binary
+sqlglot
+langchain-classic
 langchain-core
 langchain-community
 langchain-huggingface
 sentence-transformers
 faiss-cpu
-timm>=1.0
-# LLM provider: langchain-openai covers OpenRouter and OpenAI
-langchain-openai
-# langchain-groq
+# Groq-hosted open-weight chat models
+langchain-groq
+langgraph
+rank_bm25

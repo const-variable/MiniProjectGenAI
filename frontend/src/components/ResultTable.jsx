@@ -1,7 +1,9 @@
-function fmt(v) {
-  if (v === null || v === undefined) return "—";
-  if (typeof v === "number") return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
-  return String(v);
+function formatCellValue(cellValue) {
+  if (cellValue === null || cellValue === undefined) return "—";
+  if (typeof cellValue === "number") {
+    return cellValue.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+  return String(cellValue);
 }
 
 export default function ResultTable({ columns, rows }) {
@@ -11,17 +13,17 @@ export default function ResultTable({ columns, rows }) {
       <table>
         <thead>
           <tr>
-            {columns.map((c) => (
-              <th key={c}>{c}</th>
+            {columns.map((columnName) => (
+              <th key={columnName}>{columnName}</th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {rows.map((r, i) => (
-            <tr key={i}>
-              {r.map((v, j) => (
-                <td key={j} className={typeof v === "number" ? "num" : ""}>
-                  {fmt(v)}
+          {rows.map((row, rowIndex) => (
+            <tr key={rowIndex}>
+              {row.map((cellValue, columnIndex) => (
+                <td key={columnIndex} className={typeof cellValue === "number" ? "num" : ""}>
+                  {formatCellValue(cellValue)}
                 </td>
               ))}
             </tr>

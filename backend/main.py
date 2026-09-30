@@ -1,6 +1,7 @@
 """FastAPI app: the entry point. Run from the backend folder:
     uvicorn main:app --reload --port 8000
 """
+import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -12,23 +13,28 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from core.embedding_model import load_embedding_model
-from core.llm import load_llm
-from core.loader import ALLOWED_EXTENSIONS, _decode, clean_name, clean_table, read_table
+from core.llm import is_llm_provider_error, load_llm
+from core.loader import decode_text
 from offline.sql_query_logs import parse_query_logs
 from offline.table_metadata_store import parse_notes
 from rag_session import TableRAGSession
 from sessions import SessionStore
+from sources import DBSource, UploadSource
 
 # Load backend/.env no matter which folder the server is started from.
 load_dotenv(Path(__file__).parent / ".env")
-for _key in ("LLM_PROVIDER", "LLM_MODEL"):
-    if not os.getenv(_key):
-        raise RuntimeError(f"{_key} is not set. Create backend/.env (copy .env.example) and fill it in.")
+if not os.getenv("GROQ_API_KEY"):
+    raise RuntimeError("GROQ_API_KEY is not set. Create backend/.env (copy .env.example) and fill it in.")
 
 MAX_BYTES = int(float(os.getenv("MAX_UPLOAD_MB", "20")) * 1024 * 1024)
 LOG_EXTENSIONS = (".sql", ".txt")
 models = {}                      # LLM + embedding model, loaded once at startup
 sessions = SessionStore()
+build_progress = {}              # progress_id -> latest stage of a running index build, polled by the UI
+logger = logging.getLogger(__name__)
+PROVIDER_ERROR_DETAIL = (
+    "The LLM provider returned an error: check GROQ_API_KEY, model availability, or quota."
+)
 
 
 @asynccontextmanager
@@ -43,13 +49,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Table RAG API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in os.getenv("FRONTEND_ORIGINS", "http://localhost:5173").split(",")],
+    allow_origins=[origin.strip() for origin in os.getenv("FRONTEND_ORIGINS", "http://localhost:5173").split(",")],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
-# ---------------------------------------------------------------- schemas
 
 class ColumnInfo(BaseModel):
     name: str
@@ -61,9 +65,17 @@ class TableInfo(BaseModel):
     rows: int
     summary: str
     columns: List[ColumnInfo]
+    example_questions: List[str] = []
 
 
-class ResultTable(BaseModel):
+class RelationshipInfo(BaseModel):
+    table_a: str
+    column_a: str
+    table_b: str
+    column_b: str
+
+
+class QueryResult(BaseModel):
     columns: List[str]
     rows: List[List[Any]]
 
@@ -73,6 +85,8 @@ class UploadResponse(BaseModel):
     summary: str
     query_logs: int
     tables: List[TableInfo]
+    source: dict
+    relationships: List[RelationshipInfo] = []
 
 
 class AskRequest(BaseModel):
@@ -96,23 +110,63 @@ class AskResponse(BaseModel):
     top_n_tables: List[CandidateTable]
     selected_tables: List[str]
     similar_queries: List[SimilarQuery]
-    result: ResultTable
+    result: QueryResult
     error: Optional[str] = None
+    selection_reason: Optional[str] = None
+    sql_explanation: Optional[str] = None
+    score_kind: str = "distance"
+    standalone_question: Optional[str] = None
 
 
 def get_session(session_id: str) -> TableRAGSession:
-    s = sessions.get(session_id)
-    if s is None:
-        raise HTTPException(404, "Session not found or expired. Please upload your files again.")
-    return s
+    session = sessions.get(session_id)
+    if session is None:
+        raise HTTPException(404, "Session not found or expired. Please build the dataset again.")
+    return session
 
 
-def session_payload(sid: str, s: TableRAGSession) -> dict:
-    return {"session_id": sid, "summary": s.summary, "query_logs": len(s.query_log),
-            "tables": s.tables_info()}
+def session_payload(session_id: str, session: TableRAGSession) -> dict:
+    return {"session_id": session_id, "summary": session.summary,
+            "query_logs": len(session.query_log), "tables": session.tables_info(),
+            "source": {"kind": session.source.kind, "dialect": session.source.dialect,
+                       "name": session.source.display_name()},
+            "relationships": [{"table_a": table_a, "column_a": column_a,
+                               "table_b": table_b, "column_b": column_b}
+                              for table_a, column_a, table_b, column_b in session.source.join_keys()]}
 
 
-# ---------------------------------------------------------------- endpoints
+def read_query_logs(sql_files: Optional[List[UploadFile]]) -> list[str]:
+    sql_statements = []
+    for query_log_file in sql_files or []:
+        filename = query_log_file.filename or "logs"
+        if not filename.lower().endswith(LOG_EXTENSIONS):
+            raise HTTPException(400, f"{filename}: query logs must be .sql or .txt files.")
+        sql_statements.extend(parse_query_logs(decode_text(query_log_file.file.read())))
+    return sql_statements
+
+
+def build_session(source, descriptions: str, dataset_description: str,
+                  sql_statements: list[str], progress_id: str = "") -> dict:
+    def report_progress(stage: str, done: int, total: int):
+        if progress_id:
+            build_progress[progress_id] = {"stage": stage, "done": done, "total": total}
+
+    try:
+        session = TableRAGSession(source, models["llm"], models["embeddings"],
+                                  notes=parse_notes(descriptions), raw_queries=sql_statements,
+                                  dataset_description=dataset_description,
+                                  on_progress=report_progress)
+    except Exception as error:
+        source.close()
+        logger.warning("Indexing failed for %s source (%s)", source.kind, type(error).__name__)
+        if is_llm_provider_error(error):
+            raise HTTPException(502, PROVIDER_ERROR_DETAIL) from error
+        raise HTTPException(500, "Failed to build the knowledge base.") from error
+    finally:
+        build_progress.pop(progress_id, None)
+    return session_payload(sessions.create(session), session)
+
+
 # Plain `def` (not async): FastAPI runs these in a thread pool, so a slow
 # LLM call for one user doesn't block everyone else.
 
@@ -126,56 +180,72 @@ def upload(
     files: List[UploadFile] = File(...),
     query_logs: Optional[List[UploadFile]] = File(None),
     descriptions: str = Form(""),
+    dataset_description: str = Form(""),
+    progress_id: str = Form(""),
 ):
-    """Tables (+ optional SQL query logs) -> OFFLINE VECTOR INDEX CREATION."""
-    tables = {}
-    for f in files:
-        name = f.filename or "table"
-        if not name.lower().endswith(ALLOWED_EXTENSIONS):
-            raise HTTPException(400, f"{name}: tables must be .csv, .txt or .tsv files.")
-        raw = f.file.read()
-        if len(raw) > MAX_BYTES:
-            raise HTTPException(400, f"{name} is larger than {MAX_BYTES // (1024 * 1024)} MB.")
-        try:
-            df = clean_table(read_table(raw))
-        except Exception as e:
-            raise HTTPException(400, f"Could not read {name}: {e}")
-        if df.empty or df.shape[1] == 0:
-            raise HTTPException(400, f"{name} has no data.")
-
-        base = clean_name(name.rsplit(".", 1)[0])
-        table, i = base, 2
-        while table in tables:
-            table, i = f"{base}_{i}", i + 1
-        tables[table] = df
-
-    queries = []
-    for f in query_logs or []:
-        name = f.filename or "logs"
-        if not name.lower().endswith(LOG_EXTENSIONS):
-            raise HTTPException(400, f"{name}: query logs must be .sql or .txt files.")
-        queries += parse_query_logs(_decode(f.file.read()))
-
+    """Build an index from uploaded table files and optional SQL logs."""
+    sql_statements = read_query_logs(query_logs)
     try:
-        s = TableRAGSession(tables, models["llm"], models["embeddings"],
-                            notes=parse_notes(descriptions), raw_queries=queries)
-    except Exception as e:
-        raise HTTPException(500, f"Failed to build the knowledge base: {e}")
+        source = UploadSource([(table_file.filename or "table", table_file.file.read())
+                               for table_file in files], MAX_BYTES)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+    return build_session(source, descriptions, dataset_description, sql_statements, progress_id)
 
-    sid = sessions.create(s)
-    return session_payload(sid, s)
+
+@app.post("/connect", response_model=UploadResponse)
+def connect_database(
+    connection_url: str = Form(...),
+    db_schema: str = Form(""),
+    include_tables: str = Form(""),
+    query_logs: Optional[List[UploadFile]] = File(None),
+    descriptions: str = Form(""),
+    dataset_description: str = Form(""),
+    progress_id: str = Form(""),
+):
+    """Connect to a database and build an index from its selected tables."""
+    sql_statements = read_query_logs(query_logs)
+    table_names = [table.strip() for table in include_tables.split(",") if table.strip()] or None
+    try:
+        source = DBSource(connection_url, db_schema.strip() or None, table_names)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+    return build_session(source, descriptions, dataset_description, sql_statements, progress_id)
+
+
+@app.post("/connect/test")
+def test_database_connection(connection_url: str = Form(...), db_schema: str = Form("")):
+    try:
+        source = DBSource(connection_url, db_schema.strip() or None)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+    try:
+        table_names = source.list_tables()
+        return {"connected": True, "tables": table_names, "count": len(table_names),
+                "dialect": source.dialect, "name": source.display_name()}
+    finally:
+        source.close()
+
+
+@app.get("/progress/{progress_id}")
+def progress(progress_id: str):
+    """Latest stage of a running /upload or /connect build; stage is null before profiling starts."""
+    return build_progress.get(progress_id, {"stage": None, "done": 0, "total": 0})
 
 
 @app.post("/ask", response_model=AskResponse)
-def ask(req: AskRequest):
-    """Question -> ONLINE TEXT2SQL."""
-    if not req.question.strip():
+def ask(request: AskRequest):
+    """Retrieve tables, generate guarded SQL, and answer from its query rows."""
+    if not request.question.strip():
         raise HTTPException(400, "Question is empty.")
-    s = get_session(req.session_id)
+    session = get_session(request.session_id)
     try:
-        return s.ask(req.question.strip())
-    except Exception as e:
-        raise HTTPException(500, f"Failed to answer: {e}")
+        return session.ask(request.question.strip())
+    except Exception as error:
+        logger.warning("Ask endpoint failed (%s)", type(error).__name__)
+        if is_llm_provider_error(error):
+            raise HTTPException(502, PROVIDER_ERROR_DETAIL) from error
+        raise HTTPException(500, "Failed to answer the question.") from error
 
 
 @app.get("/session/{session_id}", response_model=UploadResponse)

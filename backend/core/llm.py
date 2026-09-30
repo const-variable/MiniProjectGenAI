@@ -9,12 +9,28 @@ from langchain_core.output_parsers import StrOutputParser
 
 
 def load_llm():
-    """Create the chat model named in backend/.env (LLM_PROVIDER + LLM_MODEL)."""
-    from langchain.chat_models import init_chat_model
-    return init_chat_model(os.environ["LLM_MODEL"],
-                           model_provider=os.environ["LLM_PROVIDER"], temperature=0)
+    """Create the Groq-hosted open-weight chat model from backend/.env."""
+    from langchain_groq import ChatGroq
+    cache_backend = os.getenv("LLM_CACHE", "").lower()
+    if cache_backend == "sqlite":
+        from langchain_community.cache import SQLiteCache
+        from langchain_core.globals import set_llm_cache
+        set_llm_cache(SQLiteCache(".llm_cache.db"))
+    return ChatGroq(
+        model=os.getenv("LLM_MODEL", "openai/gpt-oss-120b"),
+        api_key=os.environ["GROQ_API_KEY"],
+        temperature=0,  # hyperparameter
+        # Free-tier token-per-minute limits are hit while summarising many tables;
+        # the client waits for Groq's retry-after before each retry.
+        max_retries=6,
+    )
 
 
-def make_chain(prompt, llm):
-    """Prompt -> LLM -> plain text. Every arrow 'Prompt -> LLM' in the diagram is one of these."""
-    return prompt | llm | StrOutputParser()
+def is_llm_provider_error(error: Exception) -> bool:
+    """Identify errors raised by the configured Groq client without inspecting messages."""
+    return any(cls.__module__.split(".", 1)[0] in {"groq", "langchain_groq"}
+               for cls in type(error).__mro__)
+
+
+def make_chain(prompt_template, chat_model):
+    return prompt_template | chat_model | StrOutputParser()
