@@ -1,0 +1,13 @@
+product_id,product_name,category,unit_price
+P01,Laptop,Electronics,55000
+P02,Phone,Electronics,30000
+P03,Headphones,Electronics,4000
+P04,Tablet,Electronics,25000
+P05,Sofa,Furniture,40000
+P06,Desk,Furniture,12000
+P07,Chair,Furniture,6000
+P08,Lamp,Furniture,2500
+P09,T-shirt,Apparel,800
+P10,Jeans,Apparel,2200
+P11,Jacket,Apparel,4500
+P12,Sneakers,Apparel,3500

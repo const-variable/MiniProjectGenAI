@@ -1,0 +1,6 @@
+name | subject | marks | exam_date
+Asha | Math | 78 | 2025-03-10
+Ravi | Science | 65 | 2025-03-11
+Meera | Math | 91 | 2025-06-02
+Kabir | English | 58 | 2025-06-03
+Asha | English | 83 | 2025-06-03
