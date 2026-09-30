@@ -1,0 +1,2 @@
+# MiniProjectGenAI
+RAG based application
