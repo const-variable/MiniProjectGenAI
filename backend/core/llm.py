@@ -20,6 +20,9 @@ def load_llm():
         model=os.getenv("LLM_MODEL", "openai/gpt-oss-120b"),
         api_key=os.environ["GROQ_API_KEY"],
         temperature=0,  # hyperparameter
+        # Free-tier token-per-minute limits are hit while summarising many tables;
+        # the client waits for Groq's retry-after before each retry.
+        max_retries=6,
     )
 
 

@@ -114,3 +114,13 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .hint { font-size: 11.5px; color: var(--muted); margin-top: 4px; }
 .example { margin-bottom: 8px; display: flex; flex-direction: column; gap: 4px; }
 .sql.small { font-size: 12px; padding: 8px 10px; }
+
+.build-progress { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--accent-soft); }
+.build-progress-header { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; }
+.progress-track { position: relative; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.progress-fill { height: 100%; border-radius: 3px; background: var(--accent); transition: width 0.4s ease; }
+.progress-track.indeterminate .progress-fill { position: absolute; width: 35%; animation: progress-slide 1.2s ease-in-out infinite; }
+@keyframes progress-slide { from { left: -35%; } to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) {
+  .progress-track.indeterminate .progress-fill { animation: none; left: 0; width: 100%; opacity: 0.4; }
+}

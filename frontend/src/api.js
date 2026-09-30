@@ -30,17 +30,18 @@ async function request(path, options) {
   }
 }
 
-export function uploadFiles(files, logFiles, descriptions, datasetDescription) {
+export function uploadFiles(files, logFiles, descriptions, datasetDescription, progressId) {
   const form = new FormData();
   for (const tableFile of files) form.append("files", tableFile);
   for (const logFile of logFiles || []) form.append("query_logs", logFile);
   form.append("descriptions", descriptions || "");
   form.append("dataset_description", datasetDescription || "");
+  form.append("progress_id", progressId || "");
   // No Content-Type header: the browser sets it, with the correct boundary.
   return request("/upload", { method: "POST", body: form });
 }
 
-export function connectDatabase(url, schema, tables, logFiles, descriptions, datasetDescription) {
+export function connectDatabase(url, schema, tables, logFiles, descriptions, datasetDescription, progressId) {
   const form = new FormData();
   form.append("connection_url", url);
   form.append("db_schema", schema || "");
@@ -48,7 +49,12 @@ export function connectDatabase(url, schema, tables, logFiles, descriptions, dat
   for (const logFile of logFiles || []) form.append("query_logs", logFile);
   form.append("descriptions", descriptions || "");
   form.append("dataset_description", datasetDescription || "");
+  form.append("progress_id", progressId || "");
   return request("/connect", { method: "POST", body: form });
+}
+
+export function getBuildProgress(progressId) {
+  return request(`/progress/${progressId}`);
 }
 
 export function testConnection(url, schema) {

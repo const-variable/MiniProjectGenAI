@@ -50,19 +50,22 @@ class Summarizer:
             if not query["description"]:
                 query["description"] = "Query on " + ", ".join(query["tables"])
 
-    def summarise_tables(self, summary_inputs: list[dict]) -> list[TableSummary]:
-        summaries = self.table_chain.batch(
-            summary_inputs, config={"max_concurrency": 5},  # hyperparameter
-            return_exceptions=True)
-        table_summaries = []
-        for summary_input, summary in zip(summary_inputs, summaries):
+    def summarise_tables(self, summary_inputs: list[dict],
+                         on_table_done=lambda: None) -> list[TableSummary]:
+        table_summaries = [None] * len(summary_inputs)
+        # as_completed (not batch) so progress can be reported per finished table.
+        for input_index, summary in self.table_chain.batch_as_completed(
+                summary_inputs, config={"max_concurrency": 5},  # hyperparameter
+                return_exceptions=True):
             if isinstance(summary, OutputParserException):
                 # Malformed JSON: ask again for plain text, without example questions.
                 summary = TableSummary(
-                    summary=self.table_fallback_chain.invoke(summary_input), example_questions=[])
+                    summary=self.table_fallback_chain.invoke(summary_inputs[input_index]),
+                    example_questions=[])
             elif isinstance(summary, Exception):
                 raise summary
-            table_summaries.append(summary)
+            table_summaries[input_index] = summary
+            on_table_done()
         return table_summaries
 
     @staticmethod

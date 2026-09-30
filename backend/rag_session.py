@@ -16,16 +16,18 @@ logger = logging.getLogger(__name__)
 
 class TableRAGSession:
     def __init__(self, source, llm, embedding_model, notes: dict | None = None,
-                 raw_queries: list | None = None, dataset_description: str = ""):
+                 raw_queries: list | None = None, dataset_description: str = "",
+                 on_progress=lambda stage, done, total: None):
         self.source = source
         self.dataset_description = dataset_description.strip()
         self.history: list[dict[str, str]] = []
         self.index = build_offline_index(
-            source, llm, embedding_model, notes, raw_queries, self.dataset_description)
+            source, llm, embedding_model, notes, raw_queries, self.dataset_description, on_progress)
         self.online = OnlinePipeline(llm, self.index, source)
 
         self._overview_chain = make_chain(OVERVIEW_PROMPT, llm)
         self._suggest_chain = make_chain(SUGGEST_PROMPT, llm)
+        on_progress("Writing the dataset overview", 0, 1)
         try:
             self.summary = self._overview_chain.invoke({
                 "profile": self.profile_text(),

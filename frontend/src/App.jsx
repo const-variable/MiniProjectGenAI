@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { askQuestion, connectDatabase, deleteSession, getSuggestions, uploadFiles } from "./api";
+import { askQuestion, connectDatabase, deleteSession, getBuildProgress, getSuggestions, uploadFiles } from "./api";
 import UploadPanel from "./components/UploadPanel";
 import DatasetSummary from "./components/DatasetSummary";
 import ChatWindow from "./components/ChatWindow";
@@ -10,15 +10,30 @@ export default function App() {
   const [suggestions, setSuggestions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [buildProgress, setBuildProgress] = useState(null);
 
   async function buildDataset(sourceMode, sourceDetails, logFiles, descriptions, datasetDescription) {
     setError("");
     setLoading(true);
+    const progressId = crypto.randomUUID();
+    const buildStartedAt = Date.now();
+    setBuildProgress({ stage: null, done: 0, total: 0, buildStartedAt, stageStartedAt: buildStartedAt });
+    // The build request only returns when finished, so poll its progress alongside it.
+    const progressTimer = setInterval(() => {
+      getBuildProgress(progressId)
+        .then((latestProgress) => setBuildProgress((previousProgress) => previousProgress && {
+          ...latestProgress,
+          buildStartedAt,
+          stageStartedAt: previousProgress.stage === latestProgress.stage
+            ? previousProgress.stageStartedAt : Date.now(),
+        }))
+        .catch(() => {});
+    }, 1000);
     try {
       const sessionPayload = sourceMode === "upload"
-        ? await uploadFiles(sourceDetails.files, logFiles, descriptions, datasetDescription)
+        ? await uploadFiles(sourceDetails.files, logFiles, descriptions, datasetDescription, progressId)
         : await connectDatabase(sourceDetails.url, sourceDetails.schema, sourceDetails.tables,
-          logFiles, descriptions, datasetDescription);
+          logFiles, descriptions, datasetDescription, progressId);
       setSession(sessionPayload);
       setMessages([]);
       getSuggestions(sessionPayload.session_id)
@@ -27,6 +42,8 @@ export default function App() {
     } catch (requestError) {
       setError(requestError.message);
     } finally {
+      clearInterval(progressTimer);
+      setBuildProgress(null);
       setLoading(false);
     }
   }
@@ -96,7 +113,7 @@ export default function App() {
       {error && <div className="alert">{error}</div>}
 
       {!session ? (
-        <UploadPanel onBuildDataset={buildDataset} loading={loading} />
+        <UploadPanel onBuildDataset={buildDataset} loading={loading} buildProgress={buildProgress} />
       ) : (
         <main className="workspace">
           <DatasetSummary

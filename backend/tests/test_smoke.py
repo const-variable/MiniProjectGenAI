@@ -21,3 +21,21 @@ def test_session_indexes_all_sample_tables_without_network():
         assert len(session.tables_info()) == 4
     finally:
         session.close()
+
+def test_session_build_reports_each_stage_in_order():
+    files = [(path.name, path.read_bytes()) for path in (ROOT / "sample_data").glob("*.csv")]
+    progress_updates = []
+    session = TableRAGSession(
+        UploadSource(files),
+        FakeListChatModel(responses=["A sample table summary."]),
+        DeterministicFakeEmbedding(size=64),
+        on_progress=lambda stage, done, total: progress_updates.append((stage, done, total)),
+    )
+    try:
+        stages = list(dict.fromkeys(stage for stage, _, _ in progress_updates))
+        assert stages == ["Profiling tables", "Summarising tables",
+                          "Building the search index", "Writing the dataset overview"]
+        summarised = [done for stage, done, _ in progress_updates if stage == "Summarising tables"]
+        assert summarised == [0, 1, 2, 3, 4]
+    finally:
+        session.close()

@@ -30,6 +30,7 @@ MAX_BYTES = int(float(os.getenv("MAX_UPLOAD_MB", "20")) * 1024 * 1024)
 LOG_EXTENSIONS = (".sql", ".txt")
 models = {}                      # LLM + embedding model, loaded once at startup
 sessions = SessionStore()
+build_progress = {}              # progress_id -> latest stage of a running index build, polled by the UI
 logger = logging.getLogger(__name__)
 PROVIDER_ERROR_DETAIL = (
     "The LLM provider returned an error: check GROQ_API_KEY, model availability, or quota."
@@ -145,17 +146,24 @@ def read_query_logs(sql_files: Optional[List[UploadFile]]) -> list[str]:
 
 
 def build_session(source, descriptions: str, dataset_description: str,
-                  sql_statements: list[str]) -> dict:
+                  sql_statements: list[str], progress_id: str = "") -> dict:
+    def report_progress(stage: str, done: int, total: int):
+        if progress_id:
+            build_progress[progress_id] = {"stage": stage, "done": done, "total": total}
+
     try:
         session = TableRAGSession(source, models["llm"], models["embeddings"],
                                   notes=parse_notes(descriptions), raw_queries=sql_statements,
-                                  dataset_description=dataset_description)
+                                  dataset_description=dataset_description,
+                                  on_progress=report_progress)
     except Exception as error:
         source.close()
         logger.warning("Indexing failed for %s source (%s)", source.kind, type(error).__name__)
         if is_llm_provider_error(error):
             raise HTTPException(502, PROVIDER_ERROR_DETAIL) from error
         raise HTTPException(500, "Failed to build the knowledge base.") from error
+    finally:
+        build_progress.pop(progress_id, None)
     return session_payload(sessions.create(session), session)
 
 
@@ -173,6 +181,7 @@ def upload(
     query_logs: Optional[List[UploadFile]] = File(None),
     descriptions: str = Form(""),
     dataset_description: str = Form(""),
+    progress_id: str = Form(""),
 ):
     """Build an index from uploaded table files and optional SQL logs."""
     sql_statements = read_query_logs(query_logs)
@@ -181,7 +190,7 @@ def upload(
                                for table_file in files], MAX_BYTES)
     except ValueError as error:
         raise HTTPException(400, str(error)) from error
-    return build_session(source, descriptions, dataset_description, sql_statements)
+    return build_session(source, descriptions, dataset_description, sql_statements, progress_id)
 
 
 @app.post("/connect", response_model=UploadResponse)
@@ -192,6 +201,7 @@ def connect_database(
     query_logs: Optional[List[UploadFile]] = File(None),
     descriptions: str = Form(""),
     dataset_description: str = Form(""),
+    progress_id: str = Form(""),
 ):
     """Connect to a database and build an index from its selected tables."""
     sql_statements = read_query_logs(query_logs)
@@ -200,7 +210,7 @@ def connect_database(
         source = DBSource(connection_url, db_schema.strip() or None, table_names)
     except ValueError as error:
         raise HTTPException(400, str(error)) from error
-    return build_session(source, descriptions, dataset_description, sql_statements)
+    return build_session(source, descriptions, dataset_description, sql_statements, progress_id)
 
 
 @app.post("/connect/test")
@@ -215,6 +225,12 @@ def test_database_connection(connection_url: str = Form(...), db_schema: str = F
                 "dialect": source.dialect, "name": source.display_name()}
     finally:
         source.close()
+
+
+@app.get("/progress/{progress_id}")
+def progress(progress_id: str):
+    """Latest stage of a running /upload or /connect build; stage is null before profiling starts."""
+    return build_progress.get(progress_id, {"stage": None, "done": 0, "total": 0})
 
 
 @app.post("/ask", response_model=AskResponse)

@@ -138,3 +138,22 @@ def test_upload_limits_return_http_400(monkeypatch):
     })
     assert too_many_rows.status_code == 400
     assert "maximum is 1 rows" in too_many_rows.json()["detail"]
+
+def test_build_progress_is_visible_during_build_and_cleared_after(monkeypatch):
+    class ProgressSession(FakeSession):
+        def __init__(self, source, *args, **kwargs):
+            kwargs["on_progress"]("Summarising tables", 1, 2)
+            type(self).progress_during_build = client.get("/progress/build-1").json()
+            super().__init__(source, *args, **kwargs)
+
+    monkeypatch.setattr(main, "TableRAGSession", ProgressSession)
+    monkeypatch.setitem(main.models, "llm", object())
+    monkeypatch.setitem(main.models, "embeddings", object())
+    client = TestClient(main.app)
+    sample = ROOT / "sample_data" / "orders.csv"
+
+    uploaded = client.post("/upload", data={"progress_id": "build-1"},
+                           files={"files": (sample.name, sample.read_bytes(), "text/csv")})
+    assert uploaded.status_code == 200
+    assert ProgressSession.progress_during_build == {"stage": "Summarising tables", "done": 1, "total": 2}
+    assert client.get("/progress/build-1").json() == {"stage": None, "done": 0, "total": 0}

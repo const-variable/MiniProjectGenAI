@@ -25,11 +25,15 @@ class OfflineIndex:
 
 
 def build_offline_index(source, llm, embedding_model, notes: dict | None = None,
-                        raw_queries: list | None = None,
-                        dataset_description: str = "") -> OfflineIndex:
+                        raw_queries: list | None = None, dataset_description: str = "",
+                        on_progress=lambda stage, done, total: None) -> OfflineIndex:
     # Step 1: Profile tables before assembling schema metadata.
     tables = source.list_tables()
-    types = {table: classify_columns(source.profile_frame(table)) for table in tables}
+    types = {}
+    for table_index, table in enumerate(tables):
+        on_progress("Profiling tables", table_index, len(tables))
+        types[table] = classify_columns(source.profile_frame(table))
+    on_progress("Profiling tables", len(tables), len(tables))
     metadata_store = TableMetadataStore(source, types, notes, dataset_description)
 
     # Step 2: Attach each logged query to its referenced source tables.
@@ -37,7 +41,9 @@ def build_offline_index(source, llm, embedding_model, notes: dict | None = None,
 
     # Step 3: Summarize table profiles and useful query patterns.
     summarizer = Summarizer(llm)
-    summarizer.summarise_queries(query_log)
+    if query_log:
+        on_progress("Summarising past queries", 0, 1)
+        summarizer.summarise_queries(query_log)
     summary_inputs = []
     for table in tables:
         table_queries = [entry["sql"] for entry in query_log if table in entry["tables"]][:10]
@@ -46,12 +52,21 @@ def build_offline_index(source, llm, embedding_model, notes: dict | None = None,
             "queries": "\n\n".join(table_queries) or "(no query logs provided)",
             "dataset_description": dataset_description.strip() or "(not provided)",
         })
-    summaries = summarizer.summarise_tables(summary_inputs)
+    summarised_count = 0
+
+    def table_summarised():
+        nonlocal summarised_count
+        summarised_count += 1
+        on_progress("Summarising tables", summarised_count, len(tables))
+
+    on_progress("Summarising tables", 0, len(tables))
+    summaries = summarizer.summarise_tables(summary_inputs, table_summarised)
     table_summaries = {table: summary.summary.strip() for table, summary in zip(tables, summaries)}
     table_example_questions = {table: summary.example_questions
                                for table, summary in zip(tables, summaries)}
 
     # Steps 4 + 5: Embed summaries for question-time retrieval.
+    on_progress("Building the search index", 0, 1)
     search_documents = [
         table_document(table, table_summaries[table], source.columns(table),
                        table_example_questions[table])

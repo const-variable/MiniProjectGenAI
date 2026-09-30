@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import BuildProgress from "./BuildProgress";
 import ConnectPanel from "./ConnectPanel";
 
 function FilePicker({ title, hint, accept, pattern, selectedFiles, setFiles }) {
@@ -41,7 +42,7 @@ function FilePicker({ title, hint, accept, pattern, selectedFiles, setFiles }) {
   );
 }
 
-export default function UploadPanel({ onBuildDataset, loading }) {
+export default function UploadPanel({ onBuildDataset, loading, buildProgress }) {
   const [sourceMode, setSourceMode] = useState("upload");
   const [tableFiles, setTableFiles] = useState([]);
   const [queryLogFiles, setQueryLogFiles] = useState([]);
@@ -109,8 +110,9 @@ export default function UploadPanel({ onBuildDataset, loading }) {
       <button className="primary" disabled={(sourceMode === "upload" ? !tableFiles.length : !connectionDetails.url.trim()) || loading}
         onClick={() => onBuildDataset(sourceMode, sourceMode === "upload" ? { files: tableFiles } : connectionDetails,
           queryLogFiles, columnDescriptions, datasetDescription)}>
-        {loading ? "Summarising tables and building the index…" : "Build index"}
+        {loading ? "Building the index…" : "Build index"}
       </button>
+      {buildProgress && <BuildProgress progress={buildProgress} />}
     </section>
   );
 }
