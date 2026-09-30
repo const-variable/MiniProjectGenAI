@@ -17,7 +17,7 @@ def load_llm():
         from langchain_core.globals import set_llm_cache
         set_llm_cache(SQLiteCache(".llm_cache.db"))
     return ChatGroq(
-        model=os.getenv("LLM_MODEL", "llama-3.3-70b-versatile"),
+        model=os.getenv("LLM_MODEL", "openai/gpt-oss-120b"),
         api_key=os.environ["GROQ_API_KEY"],
         temperature=0,  # hyperparameter
     )

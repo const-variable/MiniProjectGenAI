@@ -98,7 +98,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1`; in Command Prompt use `.venv\Scripts\activate.bat`. Edit `backend/.env` and replace `your_groq_key_here` with your Groq API key. The default `LLM_MODEL` is `llama-3.3-70b-versatile`; leave it as-is unless selecting another model supported by Groq. Do not commit `.env` or share its key.
+On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1`; in Command Prompt use `.venv\Scripts\activate.bat`. Edit `backend/.env` and replace `your_groq_key_here` with your Groq API key. The default `LLM_MODEL` is `openai/gpt-oss-120b`; leave it as-is unless selecting another model supported by Groq. Do not commit `.env` or share its key.
 
 For Windows, create the environment with `py -3 -m venv .venv` and copy the template with `Copy-Item .env.example .env` while in `backend/`.
 
@@ -143,6 +143,7 @@ Press `Ctrl+C` in the frontend and backend terminals. Stop the optional database
 
 ### Troubleshooting
 
+- `The LLM provider returned an error` right away: the configured `LLM_MODEL` may have been retired by Groq. Pick a current model from [Groq models](https://console.groq.com/docs/models) and restart Uvicorn.
 - `GROQ_API_KEY is not set`: confirm `backend/.env` exists and contains the key assignment, then restart Uvicorn.
 - The browser cannot reach the API: confirm Uvicorn is running and `VITE_API_URL` matches its address and port.
 - A port is occupied: from `backend/`, start Uvicorn with `uvicorn main:app --reload --port 8001`, then start Vite with `VITE_API_URL=http://localhost:8001 npm run dev` from `frontend/`.
@@ -153,7 +154,7 @@ Press `Ctrl+C` in the frontend and backend terminals. Stop the optional database
 
 | Variable | Purpose |
 |---|---|
-| `LLM_MODEL` | Defaults to `llama-3.3-70b-versatile`, an open-weight Llama model served by Groq. |
+| `LLM_MODEL` | Defaults to `openai/gpt-oss-120b`, an open-weight model served by Groq. Groq retires models over time; see [Groq models](https://console.groq.com/docs/models). |
 | `GROQ_API_KEY` | Required Groq API credential (see `.env.example`). |
 | `EMBED_MODEL` | Open-source local embedding model, default `sentence-transformers/all-MiniLM-L6-v2`. |
 | `FRONTEND_ORIGINS` | Allowed CORS origins, default `http://localhost:5173` |
