@@ -34,3 +34,10 @@ SQL_SUMMARY_PROMPT = ChatPromptTemplate.from_messages([
      "answers. Reply with exactly one line per query, formatted as '<number>. <description>'."),
     ("human", "{queries}"),
 ])
+
+SQL_SUMMARY_STRUCTURED_PROMPT = ChatPromptTemplate.from_messages([
+    ("system",
+     "For every numbered SQL query, return its 1-based index and one short plain-English line "
+     "describing the question it answers. Include every input query exactly once."),
+    ("human", "{queries}"),
+])

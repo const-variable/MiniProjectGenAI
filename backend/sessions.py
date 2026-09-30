@@ -1,4 +1,4 @@
-"""In-memory store: session_id -> Engine. Sessions expire after an hour of inactivity."""
+"""In-memory store: session_id -> TableRAGSession, expiring after an idle TTL."""
 import threading
 import time
 import uuid

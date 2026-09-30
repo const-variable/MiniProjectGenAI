@@ -1,12 +1,14 @@
 """[Top N Tables] + [Question] -> [Table Selection Prompt] -> [LLM] -> [Top K Tables] (online)."""
 import os
 import re
+import logging
 
 from core.llm import make_chain
 from prompts.schemas import TableChoice
 from prompts.table_selection_prompt import TABLE_SELECTION_FALLBACK_PROMPT, TABLE_SELECTION_PROMPT
 
 K_SELECTED = int(os.getenv("TOP_K", "3"))
+logger = logging.getLogger(__name__)
 
 
 class TableSelector:
@@ -45,14 +47,14 @@ class TableSelector:
                     import json
                     try:
                         picked = [str(value) for value in json.loads(match.group(0))]
-                    except json.JSONDecodeError:
-                        pass
+                    except json.JSONDecodeError as error:
+                        logger.warning("Table-selection text was not valid JSON (%s)", type(error).__name__)
                 if not picked:
                     picked = [name for name in names if re.search(rf"\b{re.escape(name)}\b", text)]
                 reason = "Selected from the candidate summaries."
             picked = [p for p in picked if p in names][:k]
             if picked:
                 return picked, reason or "Selected from the candidate summaries."
-        except Exception:
-            pass
+        except Exception as error:
+            logger.warning("Table selection failed (%s); using retrieval ranking", type(error).__name__)
         return names[:k], "Selected the highest-ranked candidate tables."  # retrieval fallback

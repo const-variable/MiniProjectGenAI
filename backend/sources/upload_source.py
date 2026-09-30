@@ -1,6 +1,7 @@
 """Uploaded delimited files, backed by a shared in-memory SQLite engine."""
 from pathlib import Path
 import io
+import os
 
 import pandas as pd
 from sqlalchemy import create_engine
@@ -21,9 +22,13 @@ class UploadSource(DataSource):
             connect_args={"check_same_thread": False},
         )
         super().__init__(engine)
+        self._max_tables = int(os.getenv("MAX_TABLES_PER_UPLOAD", "20"))
+        self._max_rows = int(os.getenv("MAX_ROWS_PER_TABLE", "1000000"))
         self.frames: dict[str, pd.DataFrame] = {}
         self._join_keys: list[tuple[str, str, str, str]] = []
         try:
+            if len(files) > self._max_tables:
+                raise ValueError(f"Upload contains more than {self._max_tables} table files.")
             for filename, raw in files:
                 self._add_file(filename, raw, max_bytes)
             self._join_keys = self._identical_column_joins()
@@ -61,6 +66,12 @@ class UploadSource(DataSource):
         self._add_frame(clean_name(Path(name).stem), frame)
 
     def _add_frame(self, base: str, frame: pd.DataFrame) -> None:
+        if len(self.frames) >= self._max_tables:
+            raise ValueError(f"Upload exceeds the maximum of {self._max_tables} tables.")
+        if len(frame) > self._max_rows:
+            raise ValueError(
+                f"{base} has {len(frame):,} rows; the maximum is {self._max_rows:,} rows per table."
+            )
         table, suffix = base, 2
         while table in self.frames:
             table, suffix = f"{base}_{suffix}", suffix + 1

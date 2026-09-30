@@ -3,11 +3,13 @@
 Past SELECT queries, uploaded as a .sql / .txt file. Each query is linked to the
 uploaded tables it reads, so it can be summarised and retrieved later.
 """
+import logging
 import re
 
 from extensions.sql_guard import tables_in_query as parsed_tables_in_query
 
 MAX_LOG_QUERIES = 40
+logger = logging.getLogger(__name__)
 
 
 def parse_query_logs(text: str) -> list:
@@ -25,8 +27,8 @@ def tables_in_query(sql: str, known_tables, dialect: str = "sqlite") -> list:
     """Which source tables a query reads, falling back for unsupported log SQL."""
     try:
         return parsed_tables_in_query(sql, known_tables, dialect)
-    except ValueError:
-        pass
+    except ValueError as error:
+        logger.debug("SQL log parser fallback (%s)", type(error).__name__)
     found = []
     known = {table.casefold(): table for table in known_tables}
     for name in re.findall(r'(?i)\b(?:from|join)\s+["`\[]?([A-Za-z_][\w\.]*)', sql):
@@ -40,7 +42,9 @@ def build_query_log(queries: list, tables: list[str], dialect: str = "sqlite") -
     """Keep queries that use at least one uploaded table.
     Each entry: {'sql', 'tables', 'description'} (description is filled by the summarizer)."""
     log = []
-    for q in queries[:MAX_LOG_QUERIES]:
+    for q in queries:
+        if len(log) >= MAX_LOG_QUERIES:
+            break
         used = tables_in_query(q, tables, dialect)
         if used:
             log.append({"sql": q, "tables": used, "description": ""})

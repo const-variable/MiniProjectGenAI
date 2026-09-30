@@ -51,6 +51,7 @@ sample_data/                       sample CSVs + school.xlsx + Chinook SQLite + 
 docs/reference_architecture.png    the architecture this code implements
 docs/online_graph.md               generated LangGraph execution diagram
 backend/tests/                     offline API, source, SQL guard, and graph tests
+.github/workflows/ci.yml           backend tests and frontend production build
 ```
 
 **To follow the flow, read two files:** `offline/build_index.py` (top half of the diagram) and `online/pipeline.py` (bottom half). Both source types implement `DataSource`, and each step calls the module for that box.
@@ -71,50 +72,95 @@ Table summaries include suggested business questions in their embedded text. If 
 
 | Step | Diagram box | File |
 |---|---|---|
-| 1 | Data Analytical Question → Embedding Model | `core/embedding_model.py` |
-| 2 | Similarity Search → Top N Tables | `online/similarity_search.py` |
-| 3 | Table Selection Prompt → LLM → Top K Tables | `online/table_selection.py` |
-| 4 | Text2SQL Prompt (+ Table Metadata Store) → LLM → Generated SQL | `online/text2sql.py` |
-| 5 | *Extension:* check, execute, retry | `extensions/sql_executor.py` |
-| 6 | *Extension:* grounded answer | `extensions/answer_generator.py` |
+| Follow-up | `condense` rewrites questions using up to three prior turns | `prompts/answer_prompt.py` |
+| 1-2 | `retrieve`: question embedding → Similarity Search → Top N Tables | `online/similarity_search.py` |
+| 3 | `select_tables`: Table Selection Prompt → LLM → Top K Tables | `online/table_selection.py` |
+| 4 | `generate_sql`: Text2SQL Prompt → LLM → Generated SQL | `online/text2sql.py` |
+| 5-5b | `check_and_execute` / `fix_sql`: guard, execute, repair and retry | `extensions/sql_executor.py` |
+| 6 | `answer`: grounded answer | `extensions/answer_generator.py` |
 
-The online path is a LangGraph `StateGraph`; its nodes and SQL repair edges are exported in [docs/online_graph.md](docs/online_graph.md). The answer details display the table-selection reason, SQL explanation, and score direction.
+The online path is a LangGraph `StateGraph`; `condense` runs only when conversation history exists. Its nodes and conditional retry edges are exported in [docs/online_graph.md](docs/online_graph.md). The answer details display the table-selection reason, SQL explanation, and score direction.
 
 **Why the extensions:** the diagram returns SQL to the user. Our users are non-technical, so the SQL is run and explained. Two checks come first: the query must be one read-only SELECT, and it must **read from a table in the current dataset**. The second check stops the LLM answering from memory (e.g. `SELECT 'Oklahoma City' AS capital`); if the data can't answer, the system says so.
 
 ## Run it locally
 
-Needs **Python 3.10+** and **Node.js 18+**. Two terminals.
+Needs **Python 3.10+**, **Node.js 18+**, npm, and a [Groq API key](https://console.groq.com/keys). Run the backend and frontend in separate terminals from the repository root.
 
-**Terminal 1: backend**
+### 1. Configure the backend
+
 ```bash
 cd backend
 python3 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
+source .venv/bin/activate
+python -m pip install --upgrade pip
 pip install -r requirements.txt
-cp .env.example .env               # then add your Groq API key
+cp .env.example .env
+```
+
+On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1`; in Command Prompt use `.venv\Scripts\activate.bat`. Edit `backend/.env` and replace `your_groq_key_here` with your Groq API key. The default `LLM_MODEL` is `llama-3.3-70b-versatile`; leave it as-is unless selecting another model supported by Groq. Do not commit `.env` or share its key.
+
+For Windows, create the environment with `py -3 -m venv .venv` and copy the template with `Copy-Item .env.example .env` while in `backend/`.
+
+Start the API in the same terminal, with the virtual environment active:
+
+```bash
 uvicorn main:app --reload --port 8000
 ```
-Wait for `Application startup complete`. API test page: http://localhost:8000/docs
 
-**Terminal 2: frontend**
+Wait for `Application startup complete`. In a second terminal, verify the API:
+
+```bash
+curl http://localhost:8000/health
+```
+
+Expected response: `{"status":"ok"}`. Interactive API docs are available at http://localhost:8000/docs.
+
+### 2. Install and start the frontend
+
+Open a second terminal from the repository root:
+
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
-Open http://localhost:5173.
+
+Open http://localhost:5173. The frontend uses `http://localhost:8000` by default. If the backend uses another port, set `VITE_API_URL` before starting Vite, for example `VITE_API_URL=http://localhost:8001 npm run dev`.
+
+### 3. Build an index and ask a question
+
+- File demo: upload `orders.csv`, `products.csv`, `students.csv`, and `scores.csv` from `sample_data/`; optionally attach `query_logs.sql` and add column or dataset descriptions.
+- Excel demo: upload `school.xlsx`. The `Students` and `Scores` sheets become separate tables joined by `student_id`.
+- Database demo: choose **Connect database**, paste a connection URL, and run **Test connection** before building the index. Since Uvicorn starts in `backend/`, use `sqlite:///../sample_data/chinook.sqlite` for the included SQLite file.
+- PostgreSQL demo: install Docker Desktop, open a third terminal at the repository root, and run `docker compose up -d`. Wait until `docker compose logs postgres` reports that the database is ready to accept connections, then connect with `postgresql://readonly:readonly@localhost:5432/chinook`.
+
+The revenue sample question should identify Electronics. Chinook can answer *"Which 5 artists have the most tracks?"* The first index build may download the local embedding model; later builds reuse the cached model.
+
+### 4. Stop or restart
+
+Press `Ctrl+C` in the frontend and backend terminals. Stop the optional database from the repository root with `docker compose down`. To restart, rerun the backend and frontend start commands; the virtual environment and installed packages remain in `backend/.venv`.
+
+### Troubleshooting
+
+- `GROQ_API_KEY is not set`: confirm `backend/.env` exists and contains the key assignment, then restart Uvicorn.
+- The browser cannot reach the API: confirm Uvicorn is running and `VITE_API_URL` matches its address and port.
+- A port is occupied: from `backend/`, start Uvicorn with `uvicorn main:app --reload --port 8001`, then start Vite with `VITE_API_URL=http://localhost:8001 npm run dev` from `frontend/`.
+- Database indexing is slow: restrict the selected database tables; upload, profile, and result limits are listed in the configuration table below.
 
 ### Configuration (`backend/.env`)
 
 | Variable | Purpose |
 |---|---|
-| `LLM_PROVIDER`, `LLM_MODEL` | Defaults in `.env.example`: `groq` + `openai/gpt-oss-120b`, an open-weight chat model served by Groq. Both are configurable. |
-| `GROQ_API_KEY` | Groq API credential for hosted inference (see `.env.example`). |
-| `OPENAI_API_KEY`, `OPENAI_BASE_URL` | Optional OpenAI-compatible provider configuration, such as OpenRouter. |
+| `LLM_MODEL` | Defaults to `llama-3.3-70b-versatile`, an open-weight Llama model served by Groq. |
+| `GROQ_API_KEY` | Required Groq API credential (see `.env.example`). |
 | `EMBED_MODEL` | Open-source local embedding model, default `sentence-transformers/all-MiniLM-L6-v2`. |
 | `FRONTEND_ORIGINS` | Allowed CORS origins, default `http://localhost:5173` |
 | `MAX_UPLOAD_MB` | Max size per table file, default `20` |
+| `MAX_TABLES_PER_UPLOAD` | Maximum tables created by an upload, including Excel sheets; default `20` |
+| `MAX_ROWS_PER_TABLE` | Maximum uploaded rows per table; default `1,000,000` |
+| `MAX_RESULT_ROWS` | Maximum rows returned by a generated query; default `1000` |
+| `SQLITE_QUERY_TIMEOUT_SECONDS` | SQLite query deadline; default `15` seconds |
 | `MAX_DB_TABLES` | Maximum discovered database tables, default `50`; narrow the connection with the table list when exceeded |
 | `PROFILE_SAMPLE_ROWS` | Maximum rows sampled per database table for profiling, default `5000` |
 | `TOP_N`, `TOP_K` | Candidate and selected table limits for retrieval/selection, defaults `5` and `3` |
@@ -188,9 +234,14 @@ npm ci
 npm run build
 ```
 
+The GitHub Actions workflow runs these same backend and frontend checks on pushes and pull requests. Backend tests use fake models and do not require a Groq key or download the embedding model.
+
 ## Limitations
 
 - Sessions are in memory: lost on restart, expire after 1 hour idle.
 - Upload sources infer join keys from identical column names; database sources use declared foreign keys first.
 - Table summaries are generated in batches of up to five concurrent LLM calls, so large sources can take longer to index.
+- Database column statistics use up to `PROFILE_SAMPLE_ROWS` records; min/max/category statistics may not represent every row.
+- Query output is limited to `MAX_RESULT_ROWS`; SQLite statements are interrupted after `SQLITE_QUERY_TIMEOUT_SECONDS`.
+- Non-SQLite/PostgreSQL database dialects depend on database-user permissions for read-only enforcement.
 - "Why" answers show which categories drove a change, not real-world causes.

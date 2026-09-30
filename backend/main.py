@@ -1,6 +1,7 @@
 """FastAPI app: the entry point. Run from the backend folder:
     uvicorn main:app --reload --port 8000
 """
+import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -12,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from core.embedding_model import load_embedding_model
-from core.llm import load_llm
+from core.llm import is_llm_provider_error, load_llm
 from core.loader import _decode
 from offline.sql_query_logs import parse_query_logs
 from offline.table_metadata_store import parse_notes
@@ -22,14 +23,18 @@ from sources import DBSource, UploadSource
 
 # Load backend/.env no matter which folder the server is started from.
 load_dotenv(Path(__file__).parent / ".env")
-for _key in ("LLM_PROVIDER", "LLM_MODEL"):
-    if not os.getenv(_key):
-        raise RuntimeError(f"{_key} is not set. Create backend/.env (copy .env.example) and fill it in.")
+if not os.getenv("GROQ_API_KEY"):
+    raise RuntimeError("GROQ_API_KEY is not set. Create backend/.env (copy .env.example) and fill it in.")
 
 MAX_BYTES = int(float(os.getenv("MAX_UPLOAD_MB", "20")) * 1024 * 1024)
+MAX_TABLES_PER_UPLOAD = int(os.getenv("MAX_TABLES_PER_UPLOAD", "20"))
 LOG_EXTENSIONS = (".sql", ".txt")
 models = {}                      # LLM + embedding model, loaded once at startup
 sessions = SessionStore()
+logger = logging.getLogger(__name__)
+PROVIDER_ERROR_DETAIL = (
+    "The LLM provider returned an error: check GROQ_API_KEY, model availability, or quota."
+)
 
 
 @asynccontextmanager
@@ -170,6 +175,8 @@ def upload(
     dataset_description: str = Form(""),
 ):
     """Tables (+ optional SQL query logs) -> OFFLINE VECTOR INDEX CREATION."""
+    if len(files) > MAX_TABLES_PER_UPLOAD:
+        raise HTTPException(400, f"Upload contains more than {MAX_TABLES_PER_UPLOAD} table files.")
     queries = read_query_logs(query_logs)
     try:
         source = UploadSource([(f.filename or "table", f.file.read()) for f in files], MAX_BYTES)
@@ -178,7 +185,9 @@ def upload(
     try:
         sid, session = build_session(source, descriptions, dataset_description, queries)
     except Exception as error:
-        raise HTTPException(500, f"Failed to build the knowledge base: {error}") from error
+        logger.warning("Upload indexing failed (%s)", type(error).__name__)
+        detail = PROVIDER_ERROR_DETAIL if is_llm_provider_error(error) else "Failed to build the knowledge base."
+        raise HTTPException(502 if is_llm_provider_error(error) else 500, detail) from error
     return session_payload(sid, session)
 
 
@@ -201,7 +210,9 @@ def connect_database(
     try:
         sid, session = build_session(source, descriptions, dataset_description, queries)
     except Exception as error:
-        raise HTTPException(500, f"Failed to build the knowledge base: {error}") from error
+        logger.warning("Database indexing failed (%s)", type(error).__name__)
+        detail = PROVIDER_ERROR_DETAIL if is_llm_provider_error(error) else "Failed to build the knowledge base."
+        raise HTTPException(502 if is_llm_provider_error(error) else 500, detail) from error
     return session_payload(sid, session)
 
 
@@ -228,8 +239,11 @@ def ask(req: AskRequest):
     s = get_session(req.session_id)
     try:
         return s.ask(req.question.strip())
-    except Exception as e:
-        raise HTTPException(500, f"Failed to answer: {e}")
+    except Exception as error:
+        logger.warning("Ask endpoint failed (%s)", type(error).__name__)
+        if is_llm_provider_error(error):
+            raise HTTPException(502, PROVIDER_ERROR_DETAIL) from error
+        raise HTTPException(500, "Failed to answer the question.") from error
 
 
 @app.get("/session/{session_id}", response_model=UploadResponse)

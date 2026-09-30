@@ -3,12 +3,15 @@
 On creation it runs the OFFLINE pipeline once; each question runs the ONLINE pipeline.
 """
 import re
+import logging
 
 from core.llm import make_chain
 from offline.build_index import build_offline_index
 from online.pipeline import OnlinePipeline
 from extensions.answer_generator import df_to_json
 from prompts.answer_prompt import OVERVIEW_PROMPT, SUGGEST_PROMPT
+
+logger = logging.getLogger(__name__)
 
 
 class TableRAGSession:
@@ -28,7 +31,8 @@ class TableRAGSession:
                 "profile": self.profile_text(),
                 "dataset_description": self.dataset_description or "(not provided)",
             })
-        except Exception:
+        except Exception as error:
+            logger.warning("Dataset overview generation failed (%s)", type(error).__name__)
             tables = source.list_tables()
             self.summary = f"Loaded {len(tables)} table(s): " + ", ".join(
                 f"{table} ({source.row_count(table)} rows)" for table in tables)
@@ -74,7 +78,8 @@ class TableRAGSession:
                 text = self._suggest_chain.invoke({"profile": self.profile_text()})
                 lines = [re.sub(r"^[\s\-\*\d\.\)]+", "", ln).strip() for ln in text.splitlines()]
                 self._suggestions = [ln for ln in lines if ln.endswith("?")][:4]
-            except Exception:
+            except Exception as error:
+                logger.warning("Question suggestion generation failed (%s)", type(error).__name__)
                 self._suggestions = []
         return self._suggestions
 

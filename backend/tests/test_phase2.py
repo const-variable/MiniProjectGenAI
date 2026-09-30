@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.documents import Document
 from langchain_core.embeddings.fake import DeterministicFakeEmbedding
@@ -12,6 +13,7 @@ from prompts.summarization_prompt import TABLE_SUMMARY_PROMPT
 from prompts.text2sql_prompt import TEXT2SQL_PROMPT
 from rag_session import TableRAGSession
 from online.table_selection import TableSelector
+from extensions.sql_executor import SQLExecutor
 from sources.upload_source import UploadSource
 
 
@@ -124,6 +126,16 @@ def test_table_selection_uses_text_fallback_without_structured_output():
         {"orders": "Sales", "products": "Catalog"}, MetadataStub(), k=2)
     assert selected == ["orders", "products"]
     assert reason
+
+
+def test_literal_only_answer_fails_dataset_grounding():
+    source = UploadSource([("items.csv", b"item,category\na,first\n")])
+    try:
+        executor = SQLExecutor(source)
+        with pytest.raises(ValueError, match="does not read from a table"):
+            executor.run("SELECT 'Paris' AS answer")
+    finally:
+        source.close()
 
 
 def test_hybrid_retriever_reports_reciprocal_rank_scores(monkeypatch):

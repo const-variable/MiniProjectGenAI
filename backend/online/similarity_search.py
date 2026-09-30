@@ -11,7 +11,7 @@ MAX_EXAMPLES = 3
 
 
 def top_n_tables(vector_store, query_log: list, question: str, n: int | None = None):
-    n = N_CANDIDATES if n is None else n
+    n = int(os.getenv("TOP_N", str(N_CANDIDATES))) if n is None else n
     k = max(10, n * 3)
     if vector_store.retriever_kind == "hybrid":
         hits = vector_store.as_retriever(k).invoke(question)

@@ -1,6 +1,8 @@
 """Common SQLAlchemy-backed interface for every dataset source."""
 from abc import ABC, abstractmethod
+import os
 import threading
+import time
 
 import pandas as pd
 from sqlalchemy import text
@@ -52,11 +54,20 @@ class DataSource(ABC):
     def quote(self, identifier: str) -> str:
         return self.engine.dialect.identifier_preparer.quote(identifier)
 
-    def query(self, sql: str, max_rows: int = 1000) -> pd.DataFrame:
+    def query(self, sql: str, max_rows: int | None = None) -> pd.DataFrame:
+        row_limit = max_rows if max_rows is not None else int(os.getenv("MAX_RESULT_ROWS", "1000"))
         with self._query_lock, self.engine.connect() as connection:
-            result = connection.execute(text(sql))
-            rows = result.fetchmany(max(0, int(max_rows)))
-            return pd.DataFrame(rows, columns=result.keys())
+            raw_connection = connection.connection.driver_connection
+            if self.dialect == "sqlite":
+                deadline = time.monotonic() + float(os.getenv("SQLITE_QUERY_TIMEOUT_SECONDS", "15"))
+                raw_connection.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
+            try:
+                result = connection.execute(text(sql))
+                rows = result.fetchmany(max(0, int(row_limit)))
+                return pd.DataFrame(rows, columns=result.keys())
+            finally:
+                if self.dialect == "sqlite":
+                    raw_connection.set_progress_handler(None, 0)
 
     def row_count(self, table: str) -> int:
         result = self.query(f"SELECT COUNT(*) AS count FROM {self.quote(table)}", max_rows=1)

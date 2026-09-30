@@ -9,15 +9,24 @@ from langchain_core.output_parsers import StrOutputParser
 
 
 def load_llm():
-    """Create the chat model named in backend/.env (LLM_PROVIDER + LLM_MODEL)."""
-    from langchain.chat_models import init_chat_model
+    """Create the Groq-hosted open-weight chat model from backend/.env."""
+    from langchain_groq import ChatGroq
     cache = os.getenv("LLM_CACHE", "").lower()
     if cache == "sqlite":
         from langchain_community.cache import SQLiteCache
         from langchain_core.globals import set_llm_cache
         set_llm_cache(SQLiteCache(".llm_cache.db"))
-    return init_chat_model(os.environ["LLM_MODEL"],
-                           model_provider=os.environ["LLM_PROVIDER"], temperature=0)
+    return ChatGroq(
+        model=os.getenv("LLM_MODEL", "llama-3.3-70b-versatile"),
+        api_key=os.environ["GROQ_API_KEY"],
+        temperature=0,
+    )
+
+
+def is_llm_provider_error(error: Exception) -> bool:
+    """Identify errors raised by the configured Groq client without inspecting messages."""
+    return any(cls.__module__.split(".", 1)[0] in {"groq", "langchain_groq"}
+               for cls in type(error).__mro__)
 
 
 def make_chain(prompt, llm):

@@ -7,16 +7,13 @@ openpyxl
 sqlalchemy>=2.0
 psycopg2-binary
 sqlglot
-langchain
 langchain-classic
 langchain-core
 langchain-community
 langchain-huggingface
 sentence-transformers
 faiss-cpu
-timm>=1.0
-# LLM providers
-langchain-openai
+# Groq-hosted open-weight chat models
 langchain-groq
 langgraph
 rank_bm25

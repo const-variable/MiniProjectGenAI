@@ -16,3 +16,12 @@ class SQLAnswer(BaseModel):
 class TableSummary(BaseModel):
     summary: str = Field(description="A concise 3-5 sentence summary of this table")
     example_questions: list[str] = Field(description="Five business questions this table helps answer")
+
+
+class QueryDescription(BaseModel):
+    index: int = Field(description="The 1-based position of this SQL query in the input")
+    description: str = Field(description="A concise plain-English description of the query")
+
+
+class QueryDescriptions(BaseModel):
+    queries: list[QueryDescription]

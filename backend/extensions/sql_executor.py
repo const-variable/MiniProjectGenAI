@@ -6,8 +6,10 @@ user gets an answer. Two checks run first:
   - grounding: the query must read from a table in the dataset (no answers typed
                from the LLM's own memory, e.g. SELECT 'Oklahoma City' AS capital)
 """
-from offline.sql_query_logs import tables_in_query
+import os
+
 from extensions.sql_guard import parse_single_select
+from offline.sql_query_logs import tables_in_query
 
 NO_ANSWER = "NO_ANSWER"
 MAX_RETRIES = 2
@@ -26,7 +28,7 @@ def is_safe(sql: str, dialect: str = "sqlite") -> bool:
 
 
 class SQLExecutor:
-    def __init__(self, llm, source):
+    def __init__(self, source):
         self.source = source
 
     def run(self, sql: str):
@@ -35,4 +37,4 @@ class SQLExecutor:
         if not tables_in_query(sql, self.source.list_tables(), self.source.dialect):
             raise ValueError("The query does not read from a table in this dataset. Use FROM <table> and "
                              "take the answer from the data, or reply NO_ANSWER if the data can't answer.")
-        return self.source.query(sql)
+        return self.source.query(sql, max_rows=int(os.getenv("MAX_RESULT_ROWS", "1000")))

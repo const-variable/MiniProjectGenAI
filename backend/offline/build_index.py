@@ -7,12 +7,15 @@
   Step 5  Vector Store                -> Embeddings Index
 """
 from dataclasses import dataclass
+import logging
 from core.loader import classify_columns
 from offline.sql_query_logs import build_query_log
 from offline.summarizer import Summarizer
 from offline.table_metadata_store import TableMetadataStore
 from offline.vector_store import VectorStore, sql_document, table_document
 from prompts.schemas import TableSummary
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -50,7 +53,8 @@ def build_offline_index(source, llm, embedding_model, notes: dict | None = None,
     try:
         summaries = summarizer.table_chain.batch(
             summary_inputs, config={"max_concurrency": 5}, return_exceptions=True)
-    except Exception:
+    except Exception as error:
+        logger.warning("Batch table summarization failed (%s); using metadata fallback", type(error).__name__)
         summaries = [RuntimeError("Table summary failed") for _ in tables]
     table_summaries = {}
     table_example_questions = {}

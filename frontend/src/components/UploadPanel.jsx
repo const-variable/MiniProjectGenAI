@@ -73,7 +73,7 @@ export default function UploadPanel({ onBuild, loading }) {
       )}
 
       <h2>
-        2. SQL query logs <span className="muted">optional</span>
+        SQL query logs <span className="muted">(optional)</span>
       </h2>
       <FilePicker
         title="Drop past SQL queries here"
@@ -85,7 +85,7 @@ export default function UploadPanel({ onBuild, loading }) {
       />
 
       <label className="field">
-        Optional: explain unclear columns, one per line
+        Explain unclear columns, one per line <span className="muted">(optional)</span>
         <textarea
           rows={3}
           value={descriptions}
@@ -95,7 +95,7 @@ export default function UploadPanel({ onBuild, loading }) {
       </label>
 
       <label className="field">
-        What is this dataset about? <span className="muted">optional</span>
+        What is this dataset about? <span className="muted">(optional)</span>
         <textarea
           rows={2}
           value={datasetDescription}
@@ -107,7 +107,7 @@ export default function UploadPanel({ onBuild, loading }) {
       <button className="primary" disabled={(mode === "upload" ? !files.length : !connection.url.trim()) || loading}
         onClick={() => onBuild(mode, mode === "upload" ? { files } : connection,
           logFiles, descriptions, datasetDescription)}>
-        {loading ? "Building the index…" : "Build index"}
+        {loading ? "Summarising tables and building the index…" : "Build index"}
       </button>
     </section>
   );

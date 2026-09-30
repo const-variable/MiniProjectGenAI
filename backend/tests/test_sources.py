@@ -67,6 +67,37 @@ def test_bundled_school_workbook_contains_joinable_sheets():
         source.close()
 
 
+def test_upload_row_and_table_limits(monkeypatch):
+    monkeypatch.setenv("MAX_ROWS_PER_TABLE", "2")
+    with pytest.raises(ValueError, match="maximum is 2 rows per table"):
+        UploadSource([("large.csv", b"id,value\n1,a\n2,b\n3,c\n")])
+
+    monkeypatch.setenv("MAX_ROWS_PER_TABLE", "1000000")
+    monkeypatch.setenv("MAX_TABLES_PER_UPLOAD", "1")
+    with pytest.raises(ValueError, match="more than 1 table files"):
+        UploadSource([
+            ("first.csv", b"id,value\n1,a\n"),
+            ("second.csv", b"id,value\n2,b\n"),
+        ])
+
+
+def test_result_row_limit_and_sqlite_timeout(monkeypatch):
+    source = UploadSource([("small.csv", b"id,value\n1,a\n2,b\n3,c\n")])
+    try:
+        monkeypatch.setenv("MAX_RESULT_ROWS", "2")
+        assert len(source.query("SELECT * FROM small")) == 2
+
+        monkeypatch.setenv("SQLITE_QUERY_TIMEOUT_SECONDS", "0.01")
+        with pytest.raises(Exception, match="interrupted"):
+            source.query(
+                "WITH RECURSIVE counter(x) AS (VALUES(0) UNION ALL "
+                "SELECT x + 1 FROM counter WHERE x < 10000000) SELECT sum(x) FROM counter"
+            )
+        assert len(source.query("SELECT * FROM small")) == 2
+    finally:
+        source.close()
+
+
 def test_db_source_preserves_names_and_is_read_only():
     path = ROOT / "sample_data" / "chinook.sqlite"
     source = DBSource(f"sqlite:///{path}")
@@ -75,6 +106,7 @@ def test_db_source_preserves_names_and_is_read_only():
         assert "InvoiceLine" in source.list_tables()
         assert ("InvoiceLine", "InvoiceId", "Invoice", "InvoiceId") in source.join_keys()
         assert "sqlite" in source.display_name()
+        assert "InvoiceId" in source.preview("InvoiceLine", limit=1).columns
         with pytest.raises(Exception):
             source.query("DELETE FROM Genre")
         assert "Genre" in source.list_tables()

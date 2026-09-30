@@ -30,3 +30,7 @@ def test_comma_joins_and_case_insensitive_names_are_found():
 
 def test_postgres_schema_qualified_names_resolve_to_real_names():
     assert tables_in_query('SELECT * FROM public."InvoiceLine"', ["InvoiceLine"], "postgresql") == ["InvoiceLine"]
+
+
+def test_quoted_case_sensitive_table_name_resolves():
+    assert tables_in_query('SELECT * FROM "InvoiceLine"', ["InvoiceLine"]) == ["InvoiceLine"]

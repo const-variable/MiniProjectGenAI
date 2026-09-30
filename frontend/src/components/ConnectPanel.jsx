@@ -49,14 +49,14 @@ export default function ConnectPanel({ onChange }) {
       </label>
       <div className="connect-options">
         <label className="field">
-          Schema <span className="muted">optional</span>
+          Schema <span className="muted">(optional)</span>
           <input value={schema} onChange={(event) => {
             setSchema(event.target.value);
             update({ schema: event.target.value });
           }} placeholder="public" />
         </label>
         <label className="field">
-          Tables <span className="muted">optional, comma-separated</span>
+          Tables <span className="muted">(optional)</span> <span className="hint">Comma-separated</span>
           <input value={tables} onChange={(event) => {
             setTables(event.target.value);
             update({ tables: event.target.value });

@@ -8,7 +8,7 @@
   Step 5  Safety + grounding check, execute, retry   -> Query Result
   Step 6  Answer Prompt + LLM                        -> grounded answer
 """
-import os
+import logging
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -21,6 +21,8 @@ from online.table_selection import TableSelector
 from online.text2sql import Text2SQL, examples_text, extract_sql
 from prompts.answer_prompt import CONDENSE_PROMPT
 from prompts.text2sql_prompt import DIALECT_RULES, FIX_SQL_PROMPT
+
+logger = logging.getLogger(__name__)
 
 
 class PipelineState(TypedDict, total=False):
@@ -50,7 +52,7 @@ class OnlinePipeline:
         self.selector = TableSelector(llm)
         self.text2sql = Text2SQL(llm)
         self.dataset_description = getattr(index.metadata_store, "dataset_description", "")
-        self.executor = SQLExecutor(llm, source)
+        self.executor = SQLExecutor(source)
         self.fix_chain = make_chain(FIX_SQL_PROMPT, llm)
         self.condense_chain = make_chain(CONDENSE_PROMPT, llm)
         self.answerer = AnswerGenerator(llm)
@@ -106,7 +108,8 @@ class OnlinePipeline:
                 "history": history_text,
                 "question": state["question"],
             }).strip()
-        except Exception:
+        except Exception as error:
+            logger.warning("Follow-up question condensation failed (%s)", type(error).__name__)
             standalone = state["question"]
         return {"standalone_question": standalone or state["question"]}
 
@@ -160,6 +163,7 @@ class OnlinePipeline:
         try:
             return {"result": self.executor.run(state["sql"]), "error": None}
         except Exception as error:
+            logger.warning("SQL check or execution failed (%s)", type(error).__name__)
             return {"result": None, "error": str(error)}
 
     def fix_sql(self, state: PipelineState) -> dict:
