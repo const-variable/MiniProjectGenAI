@@ -3,6 +3,9 @@ uvicorn[standard]
 python-multipart
 python-dotenv
 pandas
+sqlalchemy>=2.0
+psycopg2-binary
+sqlglot
 langchain
 langchain-core
 langchain-community
@@ -10,6 +13,6 @@ langchain-huggingface
 sentence-transformers
 faiss-cpu
 timm>=1.0
-# LLM provider: langchain-openai covers OpenRouter and OpenAI
+# LLM providers
 langchain-openai
-# langchain-groq
+langchain-groq

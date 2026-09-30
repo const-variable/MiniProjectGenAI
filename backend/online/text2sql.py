@@ -2,7 +2,7 @@
 import re
 
 from core.llm import make_chain
-from prompts.text2sql_prompt import TEXT2SQL_PROMPT
+from prompts.text2sql_prompt import DIALECT_RULES, TEXT2SQL_PROMPT
 
 
 def extract_sql(text: str) -> str:
@@ -21,6 +21,8 @@ class Text2SQL:
     def __init__(self, llm):
         self.chain = make_chain(TEXT2SQL_PROMPT, llm)
 
-    def generate(self, question: str, schema: str, examples: str) -> str:
-        reply = self.chain.invoke({"schema": schema, "examples": examples, "question": question})
+    def generate(self, question: str, schema: str, examples: str, dialect: str = "sqlite") -> str:
+        rules = DIALECT_RULES.get(dialect, "Use standard SQL supported by this database dialect.")
+        reply = self.chain.invoke({"schema": schema, "examples": examples, "question": question,
+                                   "dialect": dialect, "dialect_rules": rules})
         return extract_sql(reply)

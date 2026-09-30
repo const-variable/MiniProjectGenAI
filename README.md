@@ -1,6 +1,6 @@
 # Table RAG: Text2SQL with a vector index over table and SQL summaries
 
-Upload tables (and optionally past SQL queries), ask questions in plain English, get SQL plus a grounded answer.
+Upload tables or connect a read-only database (and optionally provide past SQL queries), ask questions in plain English, get SQL plus a grounded answer.
 The code follows `docs/reference_architecture.png` **box by box**: every component in the diagram has its own file.
 
 ## Folder structure = architecture
@@ -14,8 +14,12 @@ backend/
 ├── core/                          shared building blocks
 │   ├── llm.py                     [LLM]              blue boxes
 │   ├── embedding_model.py         [Embedding Model]  yellow boxes (same model offline + online)
-│   ├── data_store.py              [Tables]           the rows, in in-memory SQLite
-│   └── loader.py                  reads .csv/.txt/.tsv, detects separator, cleans, classifies columns
+│   └── loader.py                  reads and profiles uploaded delimited files
+│
+├── sources/                       shared SQLAlchemy-backed data sources
+│   ├── base.py                    DataSource interface and query helpers
+│   ├── upload_source.py           uploaded files in in-memory SQLite
+│   └── db_source.py               read-only SQLite / PostgreSQL / other databases
 │
 ├── prompts/                       green boxes
 │   ├── summarization_prompt.py    [Summarization Prompt]
@@ -38,15 +42,15 @@ backend/
 │
 └── extensions/                    steps AFTER the diagram's "Generated SQL"
     ├── sql_executor.py            safety check, grounding check, execute, retry
-    └── answer_generator.py        result → plain-English answer
+    ├── answer_generator.py        result → plain-English answer
+    └── sql_guard.py               dialect-aware read-only SQL validation
 
 frontend/                          React + Vite UI (upload, dataset summary, chat, "How this was answered")
-sample_data/                       4 tables + marks_pipe.txt (pipe-separated) + query_logs.sql
+sample_data/                       sample CSVs + Chinook SQLite database + SQL logs
 docs/reference_architecture.png    the architecture this code implements
-main.py                            copy of backend/main.py (run the one in backend/)
 ```
 
-**To follow the flow, read two files:** `offline/build_index.py` (top half of the diagram) and `online/pipeline.py` (bottom half). Each step is numbered and calls the module for that box.
+**To follow the flow, read two files:** `offline/build_index.py` (top half of the diagram) and `online/pipeline.py` (bottom half). Both source types implement `DataSource`, and each step calls the module for that box.
 
 ## Offline: runs once per upload (`offline/build_index.py`)
 
@@ -69,7 +73,7 @@ main.py                            copy of backend/main.py (run the one in backe
 | 5 | *Extension:* check, execute, retry | `extensions/sql_executor.py` |
 | 6 | *Extension:* grounded answer | `extensions/answer_generator.py` |
 
-**Why the extensions:** the diagram returns SQL to the user. Our users are non-technical, so the SQL is run and explained. Two checks come first: the query must be one read-only SELECT, and it must **read from an uploaded table**. The second check stops the LLM answering from memory (e.g. `SELECT 'Oklahoma City' AS capital`); if the data can't answer, the system says so.
+**Why the extensions:** the diagram returns SQL to the user. Our users are non-technical, so the SQL is run and explained. Two checks come first: the query must be one read-only SELECT, and it must **read from a table in the current dataset**. The second check stops the LLM answering from memory (e.g. `SELECT 'Oklahoma City' AS capital`); if the data can't answer, the system says so.
 
 ## Run it locally
 
@@ -81,7 +85,7 @@ cd backend
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env               # then add your API key (OpenRouter works)
+cp .env.example .env               # then add your Groq API key
 uvicorn main:app --reload --port 8000
 ```
 Wait for `Application startup complete`. API test page: http://localhost:8000/docs
@@ -98,20 +102,38 @@ Open http://localhost:5173.
 
 | Variable | Purpose |
 |---|---|
-| `LLM_PROVIDER`, `LLM_MODEL` | **Required.** Chat model, e.g. `openai` + `openai/gpt-4o-mini` via OpenRouter, or `groq` + `llama-3.3-70b-versatile` (also `pip install langchain-groq`) |
-| `OPENAI_API_KEY`, `OPENAI_API_BASE`, `OPENAI_BASE_URL` / `GROQ_API_KEY` | Provider credentials (see `.env.example`) |
-| `EMBED_MODEL` | Embedding model, default `sentence-transformers/all-MiniLM-L6-v2` |
+| `LLM_PROVIDER`, `LLM_MODEL` | Defaults in `.env.example`: `groq` + `openai/gpt-oss-120b`, an open-weight chat model served by Groq. Both are configurable. |
+| `GROQ_API_KEY` | Groq API credential for hosted inference (see `.env.example`). |
+| `OPENAI_API_KEY`, `OPENAI_BASE_URL` | Optional OpenAI-compatible provider configuration, such as OpenRouter. |
+| `EMBED_MODEL` | Open-source local embedding model, default `sentence-transformers/all-MiniLM-L6-v2`. |
 | `FRONTEND_ORIGINS` | Allowed CORS origins, default `http://localhost:5173` |
 | `MAX_UPLOAD_MB` | Max size per table file, default `20` |
+| `MAX_DB_TABLES` | Maximum discovered database tables, default `50`; narrow the connection with the table list when exceeded |
+| `PROFILE_SAMPLE_ROWS` | Maximum rows sampled per database table for profiling, default `5000` |
 
 The frontend reads `VITE_API_URL` (default `http://localhost:8000`).
 
-## Demo with the sample data
+## Demo with uploaded files
 
 1. **Tables:** upload `orders.csv`, `products.csv`, `students.csv`, `scores.csv` together.
 2. **Query logs:** upload `query_logs.sql`.
 3. Ask *"Why did revenue decrease in the last quarter, and which product category contributed the most?"*
    Open **How this was answered**: Top N should list all four tables, Top K should keep only `orders` and `products`, and the answer should be Electronics.
+
+## Connect a database
+
+Choose **Connect database**, enter a read-only connection URL, and optionally provide a schema and comma-separated table list. SQLite database files are opened in read-only mode; PostgreSQL connections set transactions read-only and use a 15-second statement timeout. Other SQLAlchemy dialects are allowed, but read-only behavior depends on the database user and is not tested by this app.
+
+Examples:
+
+```text
+sqlite:///path/to/chinook.sqlite
+postgresql://readonly:password@localhost:5432/chinook
+```
+
+The connection URL is never included in an API error with its password. The dataset overview displays a password-hidden source name. Use **Test connection** to list tables without building the index. For large databases, include only the tables relevant to the questions. The same query-log upload and column-description fields are available for both source types.
+
+For the included Chinook SQLite demo, connect to `sqlite:///../sample_data/chinook.sqlite` when the backend runs from `backend/`. It is the MIT-licensed [Chinook sample database](https://github.com/lerocha/chinook-database). To run its PostgreSQL variant, use `docker compose up -d` at the repo root and connect with `postgresql://readonly:readonly@localhost:5432/chinook`.
 
 ## Table file format
 
@@ -127,7 +149,9 @@ The frontend reads `VITE_API_URL` (default `http://localhost:8000`).
 
 | Method | Path | What it does |
 |---|---|---|
-| POST | `/upload` | form fields `files` (tables), `query_logs` (optional), `descriptions` → runs OFFLINE, returns `session_id`, dataset summary, tables |
+| POST | `/upload` | form fields `files` (tables), `query_logs` (optional), `descriptions` → runs OFFLINE, returns `session_id`, source, dataset summary, tables |
+| POST | `/connect` | form fields `connection_url`, `db_schema`, `include_tables` (comma-separated), `query_logs` (optional), `descriptions` → connects and builds the OFFLINE index |
+| POST | `/connect/test` | form fields `connection_url`, `db_schema` → tests and lists tables without an LLM call |
 | POST | `/ask` | `{session_id, question}` → runs ONLINE, returns answer, SQL, Top N / Top K tables, similar past queries, result rows |
 | GET | `/session/{id}` | dataset summary and tables for a session |
 | DELETE | `/session/{id}` | drop a session |
@@ -138,6 +162,6 @@ The frontend reads `VITE_API_URL` (default `http://localhost:8000`).
 ## Limitations
 
 - Sessions are in memory: lost on restart, expire after 1 hour idle.
-- Join keys are detected by identical column names across tables.
-- One LLM call per table on upload, so many tables mean a slower upload.
+- Upload sources infer join keys from identical column names; database sources use declared foreign keys first.
+- Table summaries are generated in batches of up to five concurrent LLM calls, so large sources can take longer to index.
 - "Why" answers show which categories drove a change, not real-world causes.

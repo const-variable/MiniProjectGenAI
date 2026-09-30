@@ -13,11 +13,12 @@ from pydantic import BaseModel
 
 from core.embedding_model import load_embedding_model
 from core.llm import load_llm
-from core.loader import ALLOWED_EXTENSIONS, _decode, clean_name, clean_table, read_table
+from core.loader import _decode
 from offline.sql_query_logs import parse_query_logs
 from offline.table_metadata_store import parse_notes
 from rag_session import TableRAGSession
 from sessions import SessionStore
+from sources import DBSource, UploadSource
 
 # Load backend/.env no matter which folder the server is started from.
 load_dotenv(Path(__file__).parent / ".env")
@@ -73,6 +74,7 @@ class UploadResponse(BaseModel):
     summary: str
     query_logs: int
     tables: List[TableInfo]
+    source: dict
 
 
 class AskRequest(BaseModel):
@@ -103,13 +105,34 @@ class AskResponse(BaseModel):
 def get_session(session_id: str) -> TableRAGSession:
     s = sessions.get(session_id)
     if s is None:
-        raise HTTPException(404, "Session not found or expired. Please upload your files again.")
+        raise HTTPException(404, "Session not found or expired. Please build the dataset again.")
     return s
 
 
 def session_payload(sid: str, s: TableRAGSession) -> dict:
     return {"session_id": sid, "summary": s.summary, "query_logs": len(s.query_log),
-            "tables": s.tables_info()}
+            "tables": s.tables_info(), "source": {"kind": s.source.kind,
+            "dialect": s.source.dialect, "name": s.source.display_name()}}
+
+
+def read_query_logs(query_logs: Optional[List[UploadFile]]) -> list[str]:
+    queries = []
+    for file in query_logs or []:
+        name = file.filename or "logs"
+        if not name.lower().endswith(LOG_EXTENSIONS):
+            raise HTTPException(400, f"{name}: query logs must be .sql or .txt files.")
+        queries.extend(parse_query_logs(_decode(file.file.read())))
+    return queries
+
+
+def build_session(source, descriptions: str, queries: list[str]) -> tuple[str, TableRAGSession]:
+    try:
+        session = TableRAGSession(source, models["llm"], models["embeddings"],
+                                  notes=parse_notes(descriptions), raw_queries=queries)
+    except Exception:
+        source.close()
+        raise
+    return sessions.create(session), session
 
 
 # ---------------------------------------------------------------- endpoints
@@ -128,42 +151,53 @@ def upload(
     descriptions: str = Form(""),
 ):
     """Tables (+ optional SQL query logs) -> OFFLINE VECTOR INDEX CREATION."""
-    tables = {}
-    for f in files:
-        name = f.filename or "table"
-        if not name.lower().endswith(ALLOWED_EXTENSIONS):
-            raise HTTPException(400, f"{name}: tables must be .csv, .txt or .tsv files.")
-        raw = f.file.read()
-        if len(raw) > MAX_BYTES:
-            raise HTTPException(400, f"{name} is larger than {MAX_BYTES // (1024 * 1024)} MB.")
-        try:
-            df = clean_table(read_table(raw))
-        except Exception as e:
-            raise HTTPException(400, f"Could not read {name}: {e}")
-        if df.empty or df.shape[1] == 0:
-            raise HTTPException(400, f"{name} has no data.")
-
-        base = clean_name(name.rsplit(".", 1)[0])
-        table, i = base, 2
-        while table in tables:
-            table, i = f"{base}_{i}", i + 1
-        tables[table] = df
-
-    queries = []
-    for f in query_logs or []:
-        name = f.filename or "logs"
-        if not name.lower().endswith(LOG_EXTENSIONS):
-            raise HTTPException(400, f"{name}: query logs must be .sql or .txt files.")
-        queries += parse_query_logs(_decode(f.file.read()))
-
+    queries = read_query_logs(query_logs)
     try:
-        s = TableRAGSession(tables, models["llm"], models["embeddings"],
-                            notes=parse_notes(descriptions), raw_queries=queries)
-    except Exception as e:
-        raise HTTPException(500, f"Failed to build the knowledge base: {e}")
+        source = UploadSource([(f.filename or "table", f.file.read()) for f in files], MAX_BYTES)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+    try:
+        sid, session = build_session(source, descriptions, queries)
+    except Exception as error:
+        raise HTTPException(500, f"Failed to build the knowledge base: {error}") from error
+    return session_payload(sid, session)
 
-    sid = sessions.create(s)
-    return session_payload(sid, s)
+
+@app.post("/connect", response_model=UploadResponse)
+def connect_database(
+    connection_url: str = Form(...),
+    db_schema: str = Form(""),
+    include_tables: str = Form(""),
+    query_logs: Optional[List[UploadFile]] = File(None),
+    descriptions: str = Form(""),
+):
+    """Connect a read-only database source and build its offline index."""
+    queries = read_query_logs(query_logs)
+    try:
+        tables = [table.strip() for table in include_tables.split(",") if table.strip()] or None
+        source = DBSource(connection_url, db_schema.strip() or None, tables)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+    try:
+        sid, session = build_session(source, descriptions, queries)
+    except Exception as error:
+        raise HTTPException(500, f"Failed to build the knowledge base: {error}") from error
+    return session_payload(sid, session)
+
+
+@app.post("/connect/test")
+def test_database_connection(connection_url: str = Form(...), db_schema: str = Form("")):
+    """Check a database connection without loading models or building an index."""
+    try:
+        source = DBSource(connection_url, db_schema.strip() or None)
+        tables = source.list_tables()
+        return {"connected": True, "tables": tables, "count": len(tables),
+                "dialect": source.dialect, "name": source.display_name()}
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+    finally:
+        if "source" in locals():
+            source.close()
 
 
 @app.post("/ask", response_model=AskResponse)

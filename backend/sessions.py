@@ -13,7 +13,8 @@ class SessionStore:
     def _cleanup(self):
         now = time.time()
         for sid in [s for s, (_, t) in self._items.items() if now - t > self.ttl]:
-            del self._items[sid]
+            session, _ = self._items.pop(sid)
+            session.close()
 
     def create(self, engine) -> str:
         sid = uuid.uuid4().hex
@@ -32,4 +33,8 @@ class SessionStore:
 
     def delete(self, sid: str) -> bool:
         with self._lock:
-            return self._items.pop(sid, None) is not None
+            item = self._items.pop(sid, None)
+            if item is None:
+                return False
+            item[0].close()
+            return True

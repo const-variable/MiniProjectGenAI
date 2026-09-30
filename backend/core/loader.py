@@ -64,8 +64,8 @@ def read_table(raw: bytes) -> pd.DataFrame:
     return df
 
 
-def clean_table(df: pd.DataFrame) -> pd.DataFrame:
-    """Clean column names, trim text, and convert number-like / date-like text columns."""
+def clean_column_names(df: pd.DataFrame) -> pd.DataFrame:
+    """Clean and de-duplicate uploaded column names."""
     df = df.copy()
 
     # unique, clean column names
@@ -79,6 +79,12 @@ def clean_table(df: pd.DataFrame) -> pd.DataFrame:
             seen[n] = 0
         names.append(n)
     df.columns = names
+    return df
+
+
+def convert_types(df: pd.DataFrame) -> pd.DataFrame:
+    """Trim text and convert number-like / date-like text columns without renaming."""
+    df = df.copy()
     df = df.dropna(how="all")
 
     for c in df.columns:
@@ -104,6 +110,11 @@ def clean_table(df: pd.DataFrame) -> pd.DataFrame:
             dt = pd.to_datetime(s, errors="coerce")
         df[c] = dt if dt.notna().sum() / filled > 0.9 else s
     return df
+
+
+def clean_table(df: pd.DataFrame) -> pd.DataFrame:
+    """Clean column names, trim text, and convert number-like / date-like text columns."""
+    return convert_types(clean_column_names(df))
 
 
 def classify_column(s: pd.Series, name: str) -> str:

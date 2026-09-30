@@ -36,6 +36,23 @@ export function uploadFiles(files, logFiles, descriptions) {
   return request("/upload", { method: "POST", body: form });
 }
 
+export function connectDatabase(url, schema, tables, logFiles, descriptions) {
+  const form = new FormData();
+  form.append("connection_url", url);
+  form.append("db_schema", schema || "");
+  form.append("include_tables", tables || "");
+  for (const file of logFiles || []) form.append("query_logs", file);
+  form.append("descriptions", descriptions || "");
+  return request("/connect", { method: "POST", body: form });
+}
+
+export function testConnection(url, schema) {
+  const form = new FormData();
+  form.append("connection_url", url);
+  form.append("db_schema", schema || "");
+  return request("/connect/test", { method: "POST", body: form });
+}
+
 export function askQuestion(sessionId, question) {
   return request("/ask", {
     method: "POST",

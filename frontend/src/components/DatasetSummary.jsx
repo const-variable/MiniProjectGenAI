@@ -2,7 +2,7 @@ import { useState } from "react";
 import { getPreview } from "../api";
 import ResultTable from "./ResultTable";
 
-export default function DatasetSummary({ sessionId, summary, tables, queryLogs }) {
+export default function DatasetSummary({ sessionId, summary, tables, queryLogs, source }) {
   const [preview, setPreview] = useState(null);
   const [showPreview, setShowPreview] = useState(false);
 
@@ -21,6 +21,7 @@ export default function DatasetSummary({ sessionId, summary, tables, queryLogs }
   return (
     <aside className="card summary">
       <h2>Dataset overview</h2>
+      {source && <p className="source-badge">{source.kind} · {source.dialect} · {source.name}</p>}
       <p className="text">{summary}</p>
       <p className="muted">
         Vector index: {tables.length} table summar{tables.length === 1 ? "y" : "ies"} + {queryLogs} past quer

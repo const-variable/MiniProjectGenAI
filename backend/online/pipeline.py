@@ -16,11 +16,12 @@ from online.text2sql import Text2SQL, examples_text
 
 
 class OnlinePipeline:
-    def __init__(self, llm, index, data_store, tables: dict):
+    def __init__(self, llm, index, source):
         self.index = index
         self.selector = TableSelector(llm)
         self.text2sql = Text2SQL(llm)
-        self.executor = SQLExecutor(llm, data_store, tables)
+        self.executor = SQLExecutor(llm, source)
+        self.source = source
         self.answerer = AnswerGenerator(llm)
 
     def run(self, question: str) -> dict:
@@ -34,7 +35,7 @@ class OnlinePipeline:
         # Step 4: Text2SQL Prompt (question + Top K metadata + similar past queries) -> Generated SQL
         schema = self.index.metadata_store.schema_for(top_k)
         examples = examples_text(similar)
-        sql = self.text2sql.generate(question, schema, examples)
+        sql = self.text2sql.generate(question, schema, examples, self.source.dialect)
 
         # Step 5 (extension): check, execute, retry
         result, sql, error = self.executor.run_with_retry(question, sql, schema, examples)

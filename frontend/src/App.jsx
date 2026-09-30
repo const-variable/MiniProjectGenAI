@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { askQuestion, deleteSession, getSuggestions, uploadFiles } from "./api";
+import { askQuestion, connectDatabase, deleteSession, getSuggestions, uploadFiles } from "./api";
 import UploadPanel from "./components/UploadPanel";
 import DatasetSummary from "./components/DatasetSummary";
 import ChatWindow from "./components/ChatWindow";
@@ -11,11 +11,13 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  async function handleUpload(files, logFiles, descriptions) {
+  async function handleBuild(mode, payload, logFiles, descriptions) {
     setError("");
     setLoading(true);
     try {
-      const data = await uploadFiles(files, logFiles, descriptions);
+      const data = mode === "upload"
+        ? await uploadFiles(payload.files, logFiles, descriptions)
+        : await connectDatabase(payload.url, payload.schema, payload.tables, logFiles, descriptions);
       setSession(data);
       setMessages([]);
       getSuggestions(data.session_id)
@@ -52,7 +54,7 @@ export default function App() {
     } catch (e) {
       if (e.status === 404) {
         setSession(null);
-        setError("Your session expired. Please upload the file again.");
+        setError("Your session expired. Please build the dataset again.");
       } else {
         setMessages((m) => [...m, { role: "assistant", text: `Something went wrong: ${e.message}`, isError: true }]);
       }
@@ -86,7 +88,7 @@ export default function App() {
       {error && <div className="alert">{error}</div>}
 
       {!session ? (
-        <UploadPanel onUpload={handleUpload} loading={loading} />
+        <UploadPanel onBuild={handleBuild} loading={loading} />
       ) : (
         <main className="workspace">
           <DatasetSummary
@@ -94,6 +96,7 @@ export default function App() {
             summary={session.summary}
             tables={session.tables}
             queryLogs={session.query_logs}
+            source={session.source}
           />
           <ChatWindow messages={messages} loading={loading} suggestions={suggestions} onAsk={handleAsk} />
         </main>

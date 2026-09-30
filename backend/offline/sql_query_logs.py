@@ -5,7 +5,7 @@ uploaded tables it reads, so it can be summarised and retrieved later.
 """
 import re
 
-from core.loader import clean_name
+from extensions.sql_guard import tables_in_query as parsed_tables_in_query
 
 MAX_LOG_QUERIES = 40
 
@@ -21,22 +21,27 @@ def parse_query_logs(text: str) -> list:
     return queries
 
 
-def tables_in_query(sql: str, known_tables) -> list:
-    """Which uploaded tables a query reads from (its FROM / JOIN clauses)."""
+def tables_in_query(sql: str, known_tables, dialect: str = "sqlite") -> list:
+    """Which source tables a query reads, falling back for unsupported log SQL."""
+    try:
+        return parsed_tables_in_query(sql, known_tables, dialect)
+    except ValueError:
+        pass
     found = []
+    known = {table.casefold(): table for table in known_tables}
     for name in re.findall(r'(?i)\b(?:from|join)\s+["`\[]?([A-Za-z_][\w\.]*)', sql):
-        t = clean_name(name.split(".")[-1])
-        if t in known_tables and t not in found:
-            found.append(t)
+        table = known.get(name.split(".")[-1].casefold())
+        if table and table not in found:
+            found.append(table)
     return found
 
 
-def build_query_log(queries: list, tables: dict) -> list:
+def build_query_log(queries: list, tables: list[str], dialect: str = "sqlite") -> list:
     """Keep queries that use at least one uploaded table.
     Each entry: {'sql', 'tables', 'description'} (description is filled by the summarizer)."""
     log = []
     for q in queries[:MAX_LOG_QUERIES]:
-        used = tables_in_query(q, tables)
+        used = tables_in_query(q, tables, dialect)
         if used:
             log.append({"sql": q, "tables": used, "description": ""})
     return log

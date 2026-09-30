@@ -1,0 +1,12 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: chinook
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./docker/init/01_chinook.sql:/docker-entrypoint-initdb.d/01_chinook.sql:ro
+      - ./docker/init/99_readonly.sql:/docker-entrypoint-initdb.d/99_readonly.sql:ro
