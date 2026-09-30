@@ -52,7 +52,6 @@ docs/reference_architecture.png    the architecture this code implements
 docs/online_graph.md               generated LangGraph execution diagram
 backend/tests/                     offline API, source, SQL guard, and graph tests
 docker-compose.yml, docker/init/   optional PostgreSQL Chinook database with a read-only user
-.github/workflows/ci.yml           backend tests and frontend production build
 ```
 
 **To follow the flow, read two files:** `offline/build_index.py` (top half of the diagram) and `online/pipeline.py` (bottom half). Both source types implement `DataSource`, and each step calls the module for that box.
@@ -248,7 +247,7 @@ npm ci
 npm run build
 ```
 
-The GitHub Actions workflow runs these same backend and frontend checks on pushes and pull requests. Backend tests use fake models and do not require a Groq key or download the embedding model.
+Backend tests use fake models and do not require a Groq key or download the embedding model.
 
 ## Limitations
 
